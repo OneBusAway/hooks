@@ -55,17 +55,17 @@ All new and altered tables live in `internal/store/schema.sql` (the canonical sc
 
 ## 4. CSRF and request-origin defenses
 
-- [ ] 4.1 Implement `internal/web/csrf.go` middleware that, for any cookie-authenticated mutation: (a) requires `Origin` (or `Referer` fallback) to match the request host; (b) rejects `Origin: null`; (c) reads `hooks_csrf` cookie and the form/JSON `csrf_token` field and constant-time compares them. Bearer-only requests (no `hooks_session` cookie) are exempt.
+- [x] 4.1 Implement `internal/web/csrf.go` middleware that, for any cookie-authenticated mutation: (a) requires `Origin` (or `Referer` fallback) to match the request host; (b) rejects `Origin: null`; (c) reads `hooks_csrf` cookie and the form/JSON `csrf_token` field and constant-time compares them. Bearer-only requests (no `hooks_session` cookie) are exempt.
 - [ ] 4.2 Apply CSRF middleware to: `/api/auth/login`, `/api/auth/logout`, `/api/auth/signup`, `/api/auth/device/approve`, `/api/auth/device/deny`, all `/api/me/*` mutations, all `/api/users/*` mutations, all `/api/invites/*` mutations, all admin `/api/tokens` mutations, all admin `/api/push-subscriptions` mutations
 - [ ] 4.3 Server-rendered inspector forms: include a hidden `csrf_token` field whose value matches the `hooks_csrf` cookie; rotate the CSRF cookie value on session creation/login
-- [ ] 4.4 Tests: missing `Origin` returns 403; mismatched `Origin` returns 403; `Origin: null` returns 403; missing CSRF cookie returns 403; mismatched CSRF token returns 403; valid Origin + matching CSRF token + cookie session passes; bearer-only PAT calls bypass CSRF entirely; legacy bearer-in-cookie path bypasses CSRF (since the cookie *is* the bearer in that path)
+- [x] 4.4 Tests: missing `Origin` returns 403; mismatched `Origin` returns 403; `Origin: null` returns 403; missing CSRF cookie returns 403; mismatched CSRF token returns 403; valid Origin + matching CSRF token + cookie session passes; bearer-only PAT calls bypass CSRF entirely; legacy bearer-in-cookie path bypasses CSRF (since the cookie *is* the bearer in that path)
 
 ## 5. Rate limiting
 
-- [ ] 5.1 Implement `internal/ratelimit` package with a token-bucket-per-key middleware (`KeyByIP`, `KeyByUser`); buckets live in process memory and are GC'd on idle
+- [x] 5.1 Implement `internal/ratelimit` package with a token-bucket-per-key middleware (`KeyByIP`, `KeyByUser`); buckets live in process memory and are GC'd on idle
 - [ ] 5.2 Apply rate limits: `POST /api/auth/login` (5/min/IP, 30/hour/IP), `POST /api/auth/signup` (3/min/IP, 10/hour/IP), `POST /api/auth/device/start` (10/min/IP), `POST /api/auth/device/poll` (60/min/IP), `POST /api/auth/device/approve` (10/min/user)
-- [ ] 5.3 On limit-exceeded responses: HTTP 429 with `Retry-After: <seconds>` header; record the rejection at debug log level (no plaintext in logs)
-- [ ] 5.4 Tests: bucket refills, separate IPs do not collide, 429 includes `Retry-After`, per-user buckets correctly key on the authenticated user
+- [x] 5.3 On limit-exceeded responses: HTTP 429 with `Retry-After: <seconds>` header; record the rejection at debug log level (no plaintext in logs)
+- [x] 5.4 Tests: bucket refills, separate IPs do not collide, 429 includes `Retry-After`, per-user buckets correctly key on the authenticated user
 
 ## 6. Invites — admin endpoints + bootstrap
 
