@@ -45,13 +45,13 @@ All new and altered tables live in `internal/store/schema.sql` (the canonical sc
 
 ## 3. Authentication endpoints — sessions and login
 
-- [ ] 3.1 `POST /api/auth/login` handler: parse `{email, password}`, lookup by email (always run Argon2id even on miss to defeat timing oracles), constant-time verify, reject if `deactivated_at` non-null
-- [ ] 3.2 On success, insert a `user_sessions` row with random `(id, secret)`. Hash the secret with **SHA-256** (not Argon2), store the digest as `secret_hash`. Set `Cookie: hooks_session=<id>.<plaintext>` with `HttpOnly`; `Secure` is set if `r.TLS != nil` OR (when `web.trust_proxy_headers=true`) `X-Forwarded-Proto: https`; `SameSite=Lax`, `Path=/`, `Max-Age=2592000`. Also set `Cookie: hooks_csrf=<random>` (HttpOnly false, SameSite=Lax) for the CSRF double-submit pattern.
-- [ ] 3.3 `POST /api/auth/logout` handler: parse cookie, delete session row, expire cookie (and the CSRF cookie), record an `audit_events` row with action `session.delete`
-- [ ] 3.4 Session middleware: parse `hooks_session` cookie, split on `.`, lookup by id, compute SHA-256 of the supplied plaintext, constant-time compare against `secret_hash`, touch `last_used_at`, attach `(*User, *Session)` to request context
-- [ ] 3.5 Sliding expiry: on each authenticated session use, if `last_used_at` is more than 1h newer than persisted, update `expires_at = now + ttl`
-- [ ] 3.6 Background sweeper goroutine that calls `SessionStore.DeleteExpired` every 15 minutes
-- [ ] 3.7 Tests: successful login sets cookie + row; bad password returns generic error; deactivated user gets 403; expired cookie is rejected and deleted; logout invalidates cookie even if reused; session secret is verified with SHA-256, not Argon2
+- [x] 3.1 `POST /api/auth/login` handler: parse `{email, password}`, lookup by email (always run Argon2id even on miss to defeat timing oracles), constant-time verify, reject if `deactivated_at` non-null
+- [x] 3.2 On success, insert a `user_sessions` row with random `(id, secret)`. Hash the secret with **SHA-256** (not Argon2), store the digest as `secret_hash`. Set `Cookie: hooks_session=<id>.<plaintext>` with `HttpOnly`; `Secure` is set if `r.TLS != nil` OR (when `web.trust_proxy_headers=true`) `X-Forwarded-Proto: https`; `SameSite=Lax`, `Path=/`, `Max-Age=2592000`. Also set `Cookie: hooks_csrf=<random>` (HttpOnly false, SameSite=Lax) for the CSRF double-submit pattern.
+- [x] 3.3 `POST /api/auth/logout` handler: parse cookie, delete session row, expire cookie (and the CSRF cookie), record an `audit_events` row with action `session.delete`
+- [x] 3.4 Session middleware: parse `hooks_session` cookie, split on `.`, lookup by id, compute SHA-256 of the supplied plaintext, constant-time compare against `secret_hash`, touch `last_used_at`, attach `(*User, *Session)` to request context
+- [x] 3.5 Sliding expiry: on each authenticated session use, if `last_used_at` is more than 1h newer than persisted, update `expires_at = now + ttl`
+- [x] 3.6 Background sweeper goroutine that calls `SessionStore.DeleteExpired` every 15 minutes
+- [x] 3.7 Tests: successful login sets cookie + row; bad password returns generic error; deactivated user gets 403; expired cookie is rejected and deleted; logout invalidates cookie even if reused; session secret is verified with SHA-256, not Argon2
 
 ## 4. CSRF and request-origin defenses
 
