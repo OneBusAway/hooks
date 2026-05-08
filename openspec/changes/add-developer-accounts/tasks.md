@@ -181,3 +181,43 @@ All new and altered tables live in `internal/store/schema.sql` (the canonical sc
 - [ ] 15.7 Manual smoke test of rate limiting: hammer `/api/auth/login` from one IP and confirm 429 with `Retry-After`
 - [ ] 15.8 Manual smoke test of the existing-storage rewrite: against a *real existing* v1 database (copied from a deployed instance into a sandbox), run the new binary, confirm `migrate()` adds the new columns without disturbing existing rows, confirm pre-existing tokens still authenticate `/subscribe/<source>`, and confirm pre-existing push subscriptions resume dispatch with their cursors intact.
 - [ ] 15.9 Release notes section enumerating the new endpoints, the cookie format change, the kind-split on `listener_tokens`, the no-op migration story for existing v1 deployments, and the move to sqlc-generated storage (a code-only change with zero on-disk impact, but contributors need to know `make sqlc` is the regen command and `sqlc.yaml` is the config of record).
+
+## 16. Review feedback — Tier 2 (should fix before merge)
+
+These were surfaced by the multi-agent PR review of the consumer branch.
+Each is bound to spec-driven correctness or developer ergonomics, not
+nice-to-haves.
+
+- [ ] 16.1 Standardize the audit write path on `audit.Recorder.Record`. `internal/auth/handlers.go:108` and `internal/invites/api.go:328` currently call `store.AuditStore.Insert(...)` directly with `_ = err`, bypassing the recorder's logger. Plumb `*audit.SQLRecorder` into `auth.API` and `invites.API` (alongside the existing wiring in `devicepair.API`) and route every audit write through it.
+- [ ] 16.2 Plumb `*slog.Logger` through `auth.API`, `invites.API`, `devicepair.API`. Every 500 response site (`writeJSON(w, http.StatusInternalServerError, ...)`) currently returns a generic `{"error":"internal"}` with no log line; an operator wakes up to no signal. Add `slog.WarnContext` at every 500 site with the operation name and `slog.Any("err", err)`. Use `errors.Is`/`errors.As` for downstream classification (per CLAUDE.md).
+- [ ] 16.3 Replace the `strings.Contains(err.Error(), "UNIQUE")` driver-message sniff in `internal/invites/api.go` with a typed `ErrEmailInUse` returned from `SQLite.SignupTx`. Detect the unique-constraint violation in the wrapper layer (errors.Is against `modernc.org/sqlite`'s typed errors, or a `PRAGMA`-equivalent re-check inside the tx) and surface it through the public store error vocabulary.
+- [ ] 16.4 Validate `ratelimit.Limit` inputs in `New(...)`: reject `Per <= 0` (currently divides by zero in `Allow`) and `Burst <= 0` (currently produces a permanently-empty bucket). Failure mode is panic on construction so misuse is caught at server boot, not at first 429.
+- [ ] 16.5 Add a concurrency test: two `/api/auth/device/poll` calls hit `approved_unfetched` simultaneously; assert exactly one returns 200 with the plaintext and the other returns 410. Critical given the deferred-`MarkFetched` design.
+- [ ] 16.6 Add bootstrap-consume tests in `internal/invites/api_test.go`: (a) successful signup retires any `bootstrap=true` invite via `MarkBootstrapInvitesConsumed`; (b) signup using a now-consumed bootstrap code returns 409; (c) signup using an expired bootstrap code returns 410; (d) admin-role invite stores `default_scopes` but the auth path ignores them.
+- [ ] 16.7 Strengthen the logout test in `internal/auth/sessions_test.go`: today's `TestLogout_DeletesRow_ExpiresCookie` reaches 401 because the `/probe` handler returns 401 whenever no user is in context, not because the replayed cookie was rejected. Add a direct `m.Lookup(ctx, replayedCookie)` assertion that returns `ErrInvalid` after the row was deleted.
+- [ ] 16.8 Add tests for the device-pairing `deny` flow (post-deny poll returns 403) and the 60s sweeper (a pending row past `expires_at` is transitioned to `expired`; a terminal-state row past 24h is hard-deleted).
+- [ ] 16.9 Add a test that the legacy raw-bearer-in-cookie path bypasses CSRF. The middleware's bearer-bypass branch currently fires when the `hooks_session` cookie is *missing*; the legacy path is "cookie value IS the bearer token" and the middleware needs to recognize it (callers detect by absence of session lookup).
+- [ ] 16.10 Add `KeyByUser` to `internal/ratelimit` (named in §5.1 but not implemented) and a test that two requests from the same authenticated user are rate-limited independently of two requests from the same IP.
+- [ ] 16.11 Fix outdated/inaccurate comments surfaced by the comment review:
+  - `internal/store/invites_store.go:208-212` — `SignupTx` doc still describes the OLD ordering; rewrite to "inserts the user, marks the invite consumed, sweeps any bootstrap invite — all in one tx".
+  - `internal/devicepair/codes.go:14-17` — alphabet description is wrong (says "8 chars from base32 minus 0,1,I,L,O,U"; should be "31 chars: base32 alphabet minus I,L,O" once §16-Tier-1.5 lands).
+  - `internal/auth/middleware.go:11-13` — doc references `Manager.From`; actual function is `FromContext`.
+  - `internal/ratelimit/ratelimit.go:32-34` — `KeyByIP` doc claims it returns `""` to bypass on malformed RemoteAddr; code actually returns the unparsed value.
+  - `internal/auth/handlers.go:125-127` — `clientIP` claims X-Forwarded-For trust-proxy behavior the function doesn't implement.
+  - `internal/store/types.go:1-6` — package doc lists only events/tokens/push; should also list users/sessions/invites/device_pairings/audit.
+  - `internal/devicepair/api.go:210` — "after we've flushed the response" mischaracterizes `go func(...)`; the spawn is concurrent with the in-flight write, not sequenced after it.
+
+## 17. Review feedback — Tier 3 (nice-to-have refactors)
+
+These were suggested by the review and are appropriate to fold into the
+section-9 `server.Build` wiring pass; none are correctness-critical
+on their own.
+
+- [ ] 17.1 Unexport `auth.Manager.{Sessions, Users, Audit, Cookies}`; `Manager{}` with nil deps currently compiles and crashes on first use. Force `NewManager` as the only constructor.
+- [ ] 17.2 Type `AuditEvent.Action` and `AuditEvent.TargetType` as named string aliases so the `audit.Action*` constants form a closed set the type system understands.
+- [ ] 17.3 Introduce `type Scopes []string` with `Has`, `With`, `Equal` methods. Centralizes the implicit-`account`-scope injection that's currently duplicated between `userHeldScopes` (`devicepair/api.go:364`) and the (deferred) `/api/me/tokens` mint path.
+- [ ] 17.4 Consolidate client-IP extraction into `ratelimit.KeyByIP`-shape helper (uses `net.SplitHostPort` correctly and handles bracketed IPv6); replace the manual reverse-loop in `auth/handlers.go:128-140` and `devicepair/api.go:402-413`.
+- [ ] 17.5 Add a `CountUsers :one` query and use it in `cmd/hooks init` instead of materializing `ListUsers()` to test emptiness. Trivial today; matters once a deployment has thousands of users.
+- [ ] 17.6 Drop the dead `signupTxer` interface block in `internal/invites/api.go:243-254` (the `_ = tx` no-op assignment) — only the second declaration is live.
+- [ ] 17.7 `LookupByPlaintext` (`internal/store/sqlite.go`) silently skips rows whose hash fails to parse. Log a warn keyed by `r.ID` so a corrupted secret_hash column is observable instead of causing valid plaintexts to silently miss.
+- [ ] 17.8 Add a `(p *DevicePairing) ApprovedToken() (plaintext, tokenID string, ok bool)` accessor. Replaces the runtime cross-field check in `devicepair/api.go:195` with a single typed extraction point — encodes "Status==ApprovedUnfetched ⇒ PlaintextToken≠nil ∧ TokenID≠nil" at the type boundary.

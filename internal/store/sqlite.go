@@ -326,11 +326,10 @@ func tokenFromGen(r sqlcgen.ListenerToken) Token {
 }
 
 func (s *SQLite) Insert(ctx context.Context, t Token) error {
-	scopes := strings.Join(t.Scopes, ",")
-	kind := string(t.Kind)
-	if kind == "" {
-		kind = string(TokenKindListener)
+	if t.Kind != TokenKindPAT && t.Kind != TokenKindListener {
+		return ErrTokenKindRequired
 	}
+	scopes := strings.Join(t.Scopes, ",")
 	eph := int64(0)
 	if t.Ephemeral {
 		eph = 1
@@ -342,7 +341,7 @@ func (s *SQLite) Insert(ctx context.Context, t Token) error {
 		SecretHash:  t.SecretHash,
 		CreatedAt:   t.CreatedAt.UTC().UnixNano(),
 		OwnerUserID: nullStringPtr(t.OwnerUserID),
-		Kind:        kind,
+		Kind:        string(t.Kind),
 		Ephemeral:   eph,
 		ExpiresAt:   nullInt64FromTime(t.ExpiresAt),
 	})

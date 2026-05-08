@@ -151,14 +151,30 @@ func (m *Manager) Lookup(ctx context.Context, cookieValue string) (store.User, s
 	return user, sess, nil
 }
 
-// DeleteSession revokes the row backing the cookie. Best effort: callers
-// should clear the cookie on the response regardless.
+// DeleteSession revokes the row backing the cookie. Verifies the secret
+// half of the cookie value (constant-time SHA-256 compare) BEFORE issuing
+// the DELETE so an attacker holding only the session id cannot force-
+// logout a victim. Returns ErrInvalid for malformed cookies, missing
+// rows, or hash mismatches; the row remains untouched on any of these
+// paths. The caller should clear browser cookies on the response
+// regardless of the outcome.
 func (m *Manager) DeleteSession(ctx context.Context, cookieValue string) (string, error) {
-	id, _, ok := strings.Cut(cookieValue, ".")
-	if !ok || id == "" {
+	id, plaintext, ok := strings.Cut(cookieValue, ".")
+	if !ok || id == "" || plaintext == "" {
 		return "", ErrInvalid
 	}
-	return id, m.Sessions.Delete(ctx, id)
+	sess, err := m.Sessions.LookupByID(ctx, id)
+	if err != nil {
+		return "", ErrInvalid
+	}
+	want := hashSessionSecret(plaintext)
+	if !secret.EqualString(want, sess.SecretHash) {
+		return "", ErrInvalid
+	}
+	if err := m.Sessions.Delete(ctx, id); err != nil {
+		return id, err
+	}
+	return id, nil
 }
 
 // SetCookies writes the hooks_session and hooks_csrf cookies onto w.

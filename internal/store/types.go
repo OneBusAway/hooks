@@ -20,6 +20,12 @@ var ErrDuplicate = errors.New("store: duplicate (source, delivery_id) within ded
 // ErrNotFound is returned when a requested record does not exist.
 var ErrNotFound = errors.New("store: not found")
 
+// ErrTokenKindRequired is returned by SQLite.Insert when a Token literal
+// omits Kind. Empty Kind used to silently coerce to listener, which
+// authorizes /subscribe/<source>; making the empty case loud forces
+// callers to make the privilege choice explicit.
+var ErrTokenKindRequired = errors.New("store: token kind required (use TokenKindPAT or TokenKindListener)")
+
 // Event is one captured webhook delivery.
 type Event struct {
 	Source            string

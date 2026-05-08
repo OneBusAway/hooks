@@ -131,7 +131,8 @@ func TestLogin_DeactivatedUser_403(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	body, _ := json.Marshal(loginRequest{Email: "bob@example.com", Password: "supercalifragilistic"})
-	resp, _ := http.Post(srv.URL+"/api/auth/login", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(srv.URL+"/api/auth/login", "application/json", bytes.NewReader(body))
+	if err != nil { t.Fatal(err) }
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status: %d", resp.StatusCode)
@@ -220,7 +221,8 @@ func TestLogout_DeletesRow_ExpiresCookie(t *testing.T) {
 	_ = jar
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/auth/logout", nil)
 	req.AddCookie(&http.Cookie{Name: SessionCookie, Value: cookieValue})
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil { t.Fatal(err) }
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("logout: %d", resp.StatusCode)
@@ -234,7 +236,8 @@ func TestLogout_DeletesRow_ExpiresCookie(t *testing.T) {
 	// Reusing the cookie now hits middleware ClearCookies path; /probe is anon.
 	req, _ = http.NewRequest(http.MethodGet, srv.URL+"/probe", nil)
 	req.AddCookie(&http.Cookie{Name: SessionCookie, Value: cookieValue})
-	resp, _ = http.DefaultClient.Do(req)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil { t.Fatal(err) }
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("reused cookie should not authenticate: %d", resp.StatusCode)

@@ -141,6 +141,10 @@ func Issue(ctx context.Context, ts store.TokenStore, name string, scopes []strin
 		Scopes:     scopes,
 		SecretHash: res.Hash,
 		CreatedAt:  time.Now().UTC(),
+		// Listener: this is the existing system/admin-token mint path
+		// (`hooks init`, `hooksctl token add`). PATs come from the
+		// device-pairing flow, which sets Kind explicitly.
+		Kind: store.TokenKindListener,
 	}
 	if err := ts.Insert(ctx, tok); err != nil {
 		return IssueResult{}, fmt.Errorf("persist token: %w", err)

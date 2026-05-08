@@ -62,7 +62,8 @@ func TestCreateAndList(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	body, _ := json.Marshal(createRequest{Role: "user", DefaultScopes: []string{"render"}})
-	resp, _ := http.Post(srv.URL+"/api/invites", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(srv.URL+"/api/invites", "application/json", bytes.NewReader(body))
+	if err != nil { t.Fatal(err) }
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("create: %d", resp.StatusCode)
 	}
@@ -74,7 +75,8 @@ func TestCreateAndList(t *testing.T) {
 	}
 
 	// List shows it.
-	resp, _ = http.Get(srv.URL + "/api/invites")
+	resp, err = http.Get(srv.URL + "/api/invites")
+	if err != nil { t.Fatal(err) }
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("list: %d", resp.StatusCode)
@@ -102,7 +104,8 @@ func TestSignup_HappyPath(t *testing.T) {
 		Code: "invite12345abcde", Email: "alice@example.com",
 		Name: "Alice", Password: "supercalifragilistic",
 	})
-	resp, _ := http.Post(srv.URL+"/api/auth/signup", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(srv.URL+"/api/auth/signup", "application/json", bytes.NewReader(body))
+	if err != nil { t.Fatal(err) }
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("signup: %d", resp.StatusCode)
 	}
@@ -131,7 +134,8 @@ func TestSignup_HappyPath(t *testing.T) {
 		Code: "INVITE12345ABCDE", Email: "bob@example.com",
 		Name: "Bob", Password: "supercalifragilistic2",
 	})
-	resp, _ = http.Post(srv.URL+"/api/auth/signup", "application/json", bytes.NewReader(body))
+	resp, err = http.Post(srv.URL+"/api/auth/signup", "application/json", bytes.NewReader(body))
+	if err != nil { t.Fatal(err) }
 	if resp.StatusCode != http.StatusConflict {
 		t.Errorf("replay: %d", resp.StatusCode)
 	}
@@ -158,7 +162,8 @@ func TestSignup_ExpiredInvite_410(t *testing.T) {
 		Code: "EXPIREDABCDEFGHI", Email: "alice@example.com",
 		Name: "A", Password: "supercalifragilistic",
 	})
-	resp, _ := http.Post(srv.URL+"/api/auth/signup", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(srv.URL+"/api/auth/signup", "application/json", bytes.NewReader(body))
+	if err != nil { t.Fatal(err) }
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusGone {
 		t.Fatalf("expired: %d", resp.StatusCode)
@@ -185,7 +190,8 @@ func TestSignup_BadPassword_400(t *testing.T) {
 		Code: "GOODCODE12345678", Email: "alice@example.com",
 		Name: "A", Password: "short",
 	})
-	resp, _ := http.Post(srv.URL+"/api/auth/signup", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(srv.URL+"/api/auth/signup", "application/json", bytes.NewReader(body))
+	if err != nil { t.Fatal(err) }
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status: %d", resp.StatusCode)

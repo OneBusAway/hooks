@@ -11,10 +11,11 @@ import (
 	"strings"
 )
 
-// Alphabet for user_code: 8 chars from base32 minus 0, 1, I, L, O, U
-// (high transcription-resistance). 30 characters; the user-code shape is
-// XXXX-XXXX (8 alphabet chars + a literal hyphen).
-const userCodeAlphabet = "23456789ABCDEFGHJKMNPQRSTVWXYZ"
+// userCodeAlphabet is the 31-char base32-style alphabet specified in
+// design.md and tasks.md §7.1: base32 minus the visually-confusable
+// 0/1/I/L/O. The user-code shape is XXXX-XXXX (8 alphabet chars plus
+// a literal hyphen).
+const userCodeAlphabet = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
 
 // NewDeviceCode returns a fresh 32-char hex device_code (16 random bytes).
 // The device_code is what the CLI keeps; it never hits a human's eyes.
@@ -27,17 +28,42 @@ func NewDeviceCode() (string, error) {
 }
 
 // NewUserCode returns a fresh XXXX-XXXX user_code drawn uniformly from
-// the 30-character alphabet. The user reads this off the CLI's stdout
-// and types it into the /device approval page.
+// the 31-character alphabet. Uses rejection sampling against the largest
+// multiple of len(alphabet) that fits in a byte (31*8 = 248), so each
+// alphabet position has exactly 1/31 probability — the naive `b % 31`
+// over [0,256) introduces a ~13% bias on the first 8 codepoints.
+//
+// The user reads this off the CLI's stdout and types it into the
+// /device approval page; an unbiased distribution preserves the
+// 31^8 = ~8.5e11 search space against guessing during the 15-minute
+// approval window.
 func NewUserCode() (string, error) {
-	var raw [8]byte
-	out := make([]byte, 0, 9)
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", err
-	}
-	for i, b := range raw {
-		out = append(out, userCodeAlphabet[int(b)%len(userCodeAlphabet)])
-		if i == 3 {
+	const codeLen = 8
+	const alpha = len(userCodeAlphabet)
+	// Largest byte value such that [0, limit) is an exact multiple of
+	// alpha. 256 / 31 = 8, so limit = 248. Every byte we DON'T reject
+	// maps to exactly one alphabet position via modulo, eliminating
+	// modulo bias entirely.
+	const limit = (256 / alpha) * alpha
+	out := make([]byte, 0, codeLen+1)
+	var buf [16]byte
+	bufPos := len(buf) // forces initial fill on first iteration
+	produced := 0
+	for produced < codeLen {
+		if bufPos >= len(buf) {
+			if _, err := rand.Read(buf[:]); err != nil {
+				return "", err
+			}
+			bufPos = 0
+		}
+		b := buf[bufPos]
+		bufPos++
+		if int(b) >= limit {
+			continue // bias-rejection
+		}
+		out = append(out, userCodeAlphabet[int(b)%alpha])
+		produced++
+		if produced == 4 {
 			out = append(out, '-')
 		}
 	}

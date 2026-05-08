@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -45,6 +46,13 @@ type API struct {
 	// VerificationURL is the absolute URL of the /device page printed
 	// to the CLI.
 	VerificationURL string
+
+	// Logger receives WarnContext entries for failure paths (response
+	// write errors, deferred MarkFetched failures, internal-error sites).
+	// nil-safe: a missing logger silently swallows messages, matching the
+	// existing pattern in audit.SQLRecorder. Tests inject a buffer-backed
+	// logger to assert observable behavior.
+	Logger *slog.Logger
 }
 
 // NewAPI constructs an API.
@@ -189,9 +197,6 @@ func (a *API) poll(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusGone, map[string]string{"error": "no longer fetchable"})
 		return
 	case store.DevicePairingStatusApprovedUnfetched:
-		// Surface the plaintext + token metadata, then schedule a
-		// deferred mark-fetched after the response goes out so a TCP
-		// hiccup doesn't lose the only chance to fetch it.
 		if dp.PlaintextToken == nil || dp.TokenID == nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "approved row missing token"})
 			return
@@ -201,20 +206,47 @@ func (a *API) poll(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "lookup"})
 			return
 		}
-		writeJSON(w, http.StatusOK, pollResponse{
+		// Encode into a buffer first, write to the wire explicitly, and
+		// only schedule the deferred MarkFetched if the write returned no
+		// error. design.md is explicit: "do not bind the `done` transition
+		// to TCP-write success." If the response write fails partway, the
+		// row stays approved_unfetched and the next poll succeeds — the
+		// deferred goroutine MUST NOT run, otherwise a client whose TCP
+		// read failed mid-response would lose the only chance to fetch
+		// the plaintext.
+		buf, err := json.Marshal(pollResponse{
 			Token:  *dp.PlaintextToken,
 			UserID: derefString(dp.UserID),
 			Name:   tok.Name,
 			Scopes: tok.Scopes,
 		})
-		// Deferred mark-fetched: we run it in a goroutine after we've
-		// flushed the response so the CLI's view is consistent. Per
-		// design.md we explicitly do not bind this to TCP-write success.
-		go func(deviceCode string) {
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write(buf); err != nil {
+			a.warn(r.Context(), "device-pairing poll write failed",
+				slog.String("device_code_prefix", devicePrefix(dp.DeviceCode)),
+				slog.Any("err", err),
+			)
+			return
+		}
+		// Write succeeded; schedule the deferred mark-fetched. A failure
+		// here is logged so the security-sensitive narrow window (where
+		// plaintext_token sits in approved_unfetched indefinitely) is
+		// observable instead of silent.
+		go func(deviceCode string, logger *slog.Logger) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			_ = a.Pairings.MarkFetched(ctx, deviceCode)
-		}(dp.DeviceCode)
+			if err := a.Pairings.MarkFetched(ctx, deviceCode); err != nil && logger != nil {
+				logger.WarnContext(ctx, "device-pairing mark-fetched failed",
+					slog.String("device_code_prefix", devicePrefix(deviceCode)),
+					slog.Any("err", err),
+				)
+			}
+		}(dp.DeviceCode, a.Logger)
 		return
 	}
 	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "unexpected status"})
@@ -299,7 +331,16 @@ func (a *API) approve(w http.ResponseWriter, r *http.Request) {
 		Kind: store.TokenKindPAT,
 	}
 	if err := a.Server.ApproveDevicePairing(r.Context(), req.UserCode, tok, res.Plaintext, caller.ID, a.Now().UTC()); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "approve: " + err.Error()})
+		// Do NOT echo err.Error() to the client: the underlying error
+		// can carry SQL fragments or, worse, parameter values from a
+		// future Errorf-wrapping change (which could include the
+		// plaintext token). Operators get the detail via Logger.
+		a.warn(r.Context(), "device-pairing approve failed",
+			slog.String("user_code", req.UserCode),
+			slog.String("token_id", tok.ID),
+			slog.Any("err", err),
+		)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 		return
 	}
 	a.recordAudit(r.Context(), &caller.ID, audit.ActionDevicePairingApprove, "device_pairing", dp.DeviceCode, map[string]any{
@@ -438,6 +479,24 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-// Verify that the user_code-format function rejects internal whitespace.
-// Not used by handlers but retained as a stable normalization helper.
+// warn logs at WarnContext if a logger is configured; nil-safe so callers
+// don't have to nil-check at every site.
+func (a *API) warn(ctx context.Context, msg string, attrs ...slog.Attr) {
+	if a.Logger == nil {
+		return
+	}
+	a.Logger.LogAttrs(ctx, slog.LevelWarn, msg, attrs...)
+}
+
+// devicePrefix returns the first 8 hex chars of the device_code so log
+// lines remain correlatable without persisting the full secret-adjacent
+// identifier.
+func devicePrefix(code string) string {
+	if len(code) <= 8 {
+		return code
+	}
+	return code[:8]
+}
+
+// strings.TrimSpace is used by NormalizeUserCode in codes.go.
 var _ = strings.TrimSpace
