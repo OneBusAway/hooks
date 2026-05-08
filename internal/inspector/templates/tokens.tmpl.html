@@ -1,0 +1,36 @@
+{{define "tokens"}}{{template "header" .}}
+<h1>Tokens</h1>
+<form method="post" action="/inspector/tokens/create" class="form-row">
+  <label>Name <input type="text" name="name" required></label>
+  <label>Scopes <input type="text" name="scopes" placeholder="render,admin" required></label>
+  <button type="submit">Add</button>
+</form>
+
+{{if .Plaintext}}
+<div class="banner">New token (shown once):
+  <code>{{.Plaintext}}</code>
+</div>
+{{end}}
+
+<table>
+  <thead><tr><th>ID</th><th>Name</th><th>Scopes</th><th>Created</th><th>Last used</th><th></th></tr></thead>
+  <tbody>
+  {{range .Tokens}}
+  <tr>
+    <td><code>{{.ID}}</code></td>
+    <td>{{.Name}}</td>
+    <td>{{range .Scopes}}<span class="tag">{{.}}</span> {{end}}</td>
+    <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+    <td>{{if .LastUsedAt}}{{.LastUsedAt.Format "2006-01-02 15:04"}}{{else}}–{{end}}</td>
+    <td>
+      <form method="post" action="/inspector/tokens/{{.ID}}/revoke">
+        <button type="submit" class="danger">Revoke</button>
+      </form>
+    </td>
+  </tr>
+  {{else}}
+  <tr><td colspan="6" class="empty">No active tokens.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+{{template "footer" .}}{{end}}

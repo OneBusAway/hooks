@@ -1,0 +1,31 @@
+{{define "index"}}{{template "header" .}}
+<h1>Events</h1>
+<form method="get" class="filters">
+  <label>Source
+    <select name="source">
+      <option value="">all</option>
+      {{range .Sources}}<option value="{{.}}" {{if eq . $.SelectedSource}}selected{{end}}>{{.}}</option>{{end}}
+    </select>
+  </label>
+  <button type="submit">Filter</button>
+</form>
+<table id="events">
+  <thead>
+    <tr><th>Source</th><th>Seq</th><th>Received</th><th>Delivery</th><th>Body preview</th><th></th></tr>
+  </thead>
+  <tbody>
+  {{range .Events}}
+    <tr>
+      <td>{{.Source}}</td>
+      <td>{{.Sequence}}</td>
+      <td>{{.ReceivedAt.Format "2006-01-02 15:04:05"}}</td>
+      <td><code>{{.DeliveryID}}</code></td>
+      <td><code>{{.Preview}}</code></td>
+      <td><a href="/inspector/events/{{.Source}}/{{.Sequence}}">open</a></td>
+    </tr>
+  {{else}}
+    <tr><td colspan="6" class="empty">No events yet.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+{{template "footer" .}}{{end}}
