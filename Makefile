@@ -1,4 +1,4 @@
-.PHONY: build test lint run dev tidy
+.PHONY: build test lint run dev tidy sqlc sqlc-diff
 
 GO ?= go
 HOOKS_BIN := ./bin/hooks
@@ -12,8 +12,14 @@ build:
 test:
 	$(GO) test ./...
 
-lint:
+lint: sqlc-diff
 	golangci-lint run ./...
+
+sqlc:
+	$(GO) tool sqlc generate
+
+sqlc-diff:
+	$(GO) tool sqlc diff
 
 tidy:
 	$(GO) mod tidy

@@ -83,6 +83,22 @@ type EventStore interface {
 // management APIs.
 const ScopeAdmin = "admin"
 
+// ScopeAccount is the implicit scope every active user holds; required for
+// PATs to authorize /api/me/* endpoints.
+const ScopeAccount = "account"
+
+// TokenKind distinguishes a personal access token (PAT) from a listener
+// token. PATs authorize /api/me/* and the inspector; listener tokens
+// authorize /subscribe/<source>. Stored in the listener_tokens.kind column.
+type TokenKind string
+
+const (
+	// TokenKindPAT is a personal access token.
+	TokenKindPAT TokenKind = "pat"
+	// TokenKindListener is a long-lived listener (subscribe) token.
+	TokenKindListener TokenKind = "listener"
+)
+
 // Token is a listener bearer token's metadata (never the plaintext).
 type Token struct {
 	ID         string
@@ -92,6 +108,21 @@ type Token struct {
 	CreatedAt  time.Time
 	LastUsedAt *time.Time
 	RevokedAt  *time.Time
+
+	// OwnerUserID is the owning user's id, or nil for a system-owned token
+	// (typically those minted by `hooks init` before the first user account).
+	OwnerUserID *string
+
+	// Kind is "pat" or "listener". Empty string is treated as "listener" by
+	// the wrapper layer so existing rows behave as before.
+	Kind TokenKind
+
+	// Ephemeral marks tokens auto-issued by `hooksctl forward` (etc.) that
+	// the prune loop revokes after 24h of inactivity.
+	Ephemeral bool
+
+	// ExpiresAt is the absolute expiry of the token (nullable, max 1 year).
+	ExpiresAt *time.Time
 }
 
 // HasScope reports whether scopes include name.
@@ -130,6 +161,10 @@ type PushSubscription struct {
 	LastSuccessAt       *time.Time
 	LastError           string
 	ConsecutiveFailures int
+
+	// OwnerUserID is the owning user's id, or nil for a system-owned
+	// subscription.
+	OwnerUserID *string
 }
 
 // PushSubscriptionStore manages push subscriptions and their cursors.
@@ -151,4 +186,154 @@ type PushSubscriptionStore interface {
 	Resume(ctx context.Context, id string) error
 	RotateSecret(ctx context.Context, id, newHash string) error
 	Delete(ctx context.Context, id string) error
+}
+
+// Role is a user's role in the system.
+type Role string
+
+const (
+	// RoleAdmin grants implicit access to every source scope plus admin.
+	RoleAdmin Role = "admin"
+	// RoleUser grants only the user's default_scopes (plus implicit account).
+	RoleUser Role = "user"
+)
+
+// User is an account holder.
+type User struct {
+	ID            string
+	Email         string
+	Name          string
+	Role          Role
+	PasswordHash  string
+	DefaultScopes []string
+	CreatedAt     time.Time
+	DeactivatedAt *time.Time
+	ExternalID    *string
+}
+
+// Session is a server-stored web session backing the hooks_session cookie.
+// SecretHash is sha256(plaintext); the cookie carries id.plaintext.
+type Session struct {
+	ID         string
+	UserID     string
+	SecretHash string
+	CreatedAt  time.Time
+	LastUsedAt time.Time
+	ExpiresAt  time.Time
+	UserAgent  string
+	IP         string
+}
+
+// Invite is a single-use signup gate.
+type Invite struct {
+	Code              string
+	Role              Role
+	DefaultScopes     []string
+	CreatedByUserID   *string
+	Bootstrap         bool
+	CreatedAt         time.Time
+	ExpiresAt         *time.Time
+	ConsumedAt        *time.Time
+	ConsumedByUserID  *string
+}
+
+// DevicePairingStatus is the lifecycle state of a device-pairing row.
+type DevicePairingStatus string
+
+const (
+	DevicePairingStatusPending           DevicePairingStatus = "pending"
+	DevicePairingStatusApprovedUnfetched DevicePairingStatus = "approved_unfetched"
+	DevicePairingStatusDone              DevicePairingStatus = "done"
+	DevicePairingStatusDenied            DevicePairingStatus = "denied"
+	DevicePairingStatusExpired           DevicePairingStatus = "expired"
+)
+
+// DevicePairing is the row backing the CLI device-pairing flow.
+type DevicePairing struct {
+	DeviceCode          string
+	UserCode            string
+	Status              DevicePairingStatus
+	CreatedAt           time.Time
+	ExpiresAt           time.Time
+	UserID              *string
+	RequestingIP        string
+	RequestingUserAgent string
+	RequestedScopes     []string
+	PlaintextToken      *string
+	TokenID             *string
+}
+
+// AuditEvent is one row in the audit log.
+type AuditEvent struct {
+	ID           string
+	At           time.Time
+	ActorUserID  *string
+	ActorTokenID *string
+	Action       string
+	TargetType   string
+	TargetID     string
+	Metadata     map[string]any
+}
+
+// UserStore manages user accounts.
+type UserStore interface {
+	Insert(ctx context.Context, u User) error
+	GetByID(ctx context.Context, id string) (User, error)
+	GetByEmail(ctx context.Context, email string) (User, error)
+	List(ctx context.Context) ([]User, error)
+	ListByRole(ctx context.Context, role Role) ([]User, error)
+	UpdateProfile(ctx context.Context, id, name string, defaultScopes []string) error
+	Deactivate(ctx context.Context, id string, when time.Time) error
+	Reactivate(ctx context.Context, id string) error
+	SetPasswordHash(ctx context.Context, id, hash string) error
+	CountActiveAdmins(ctx context.Context) (int64, error)
+	CountActiveAdminsExcluding(ctx context.Context, id string) (int64, error)
+}
+
+// SessionStore manages user_sessions rows.
+type SessionStore interface {
+	Insert(ctx context.Context, s Session) error
+	LookupByID(ctx context.Context, id string) (Session, error)
+	Touch(ctx context.Context, id string, lastUsedAt, expiresAt time.Time) error
+	Delete(ctx context.Context, id string) error
+	DeleteByUser(ctx context.Context, userID string) error
+	DeleteExpired(ctx context.Context, before time.Time) (int64, error)
+}
+
+// InviteStore manages invites.
+type InviteStore interface {
+	Insert(ctx context.Context, inv Invite) error
+	GetByCode(ctx context.Context, code string) (Invite, error)
+	MarkConsumed(ctx context.Context, code, byUser string, at time.Time) error
+	MarkBootstrapsConsumed(ctx context.Context, byUser string, at time.Time) (int64, error)
+	List(ctx context.Context) ([]Invite, error)
+	ListByConsumed(ctx context.Context, consumed bool) ([]Invite, error)
+	Delete(ctx context.Context, code string) error
+	EnsureBootstrap(ctx context.Context, codeFn func() string, ttl time.Duration, now time.Time) (Invite, error)
+}
+
+// DevicePairingStore manages CLI device-pairing rows.
+type DevicePairingStore interface {
+	Insert(ctx context.Context, p DevicePairing) error
+	GetByDeviceCode(ctx context.Context, deviceCode string) (DevicePairing, error)
+	GetByUserCode(ctx context.Context, userCode string) (DevicePairing, error)
+	Approve(ctx context.Context, userCode, userID, plaintextToken, tokenID string) error
+	Deny(ctx context.Context, userCode, userID string) error
+	MarkFetched(ctx context.Context, deviceCode string) error
+	ExpirePending(ctx context.Context, before time.Time) (int64, error)
+	DeleteOld(ctx context.Context, before time.Time) (int64, error)
+}
+
+// AuditStore writes to and reads from the immutable audit_events table.
+type AuditStore interface {
+	Insert(ctx context.Context, e AuditEvent) error
+	List(ctx context.Context, q AuditQuery) ([]AuditEvent, error)
+}
+
+// AuditQuery filters a List call.
+type AuditQuery struct {
+	ActorUserID *string
+	Since       *time.Time
+	Until       *time.Time
+	Limit       int
 }
