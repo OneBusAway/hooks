@@ -5,7 +5,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
-	"encoding/hex"
+	"encoding/base64"
 	"io"
 	"log/slog"
 	"net/http"
@@ -43,16 +43,19 @@ func newTestHandler(t *testing.T) (*Handler, *store.SQLite, *pubsub.Notifier) {
 
 func renderRequest(method, path string, body []byte, ts time.Time) *http.Request {
 	tsRaw := strconv.FormatInt(ts.Unix(), 10)
+	id := "delivery-" + tsRaw
 	mac := hmac.New(sha256.New, []byte(renderSecret))
+	mac.Write([]byte(id))
+	mac.Write([]byte("."))
 	mac.Write([]byte(tsRaw))
 	mac.Write([]byte("."))
 	mac.Write(body)
-	sig := "t=" + tsRaw + ",v1=" + hex.EncodeToString(mac.Sum(nil))
+	sig := "v1," + base64.StdEncoding.EncodeToString(mac.Sum(nil))
 
 	r := httptest.NewRequest(method, path, bytes.NewReader(body))
-	r.Header.Set("Render-Webhook-Id", "delivery-"+tsRaw)
-	r.Header.Set("Render-Webhook-Timestamp", tsRaw)
-	r.Header.Set("Render-Webhook-Signature", sig)
+	r.Header.Set("Webhook-Id", id)
+	r.Header.Set("Webhook-Timestamp", tsRaw)
+	r.Header.Set("Webhook-Signature", sig)
 	r.Header.Set("Content-Type", "application/json")
 	return r
 }

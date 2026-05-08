@@ -5,7 +5,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
-	"encoding/hex"
+	"encoding/base64"
 	"io"
 	"log/slog"
 	"net/http"
@@ -66,15 +66,18 @@ func ingestRender(t *testing.T, base, body string) {
 	t.Helper()
 	now := time.Now()
 	tsRaw := strconv.FormatInt(now.Unix(), 10)
+	id := "delivery-" + tsRaw + "-" + strconv.Itoa(int(time.Now().UnixNano()))
 	mac := hmac.New(sha256.New, []byte("shhh"))
+	mac.Write([]byte(id))
+	mac.Write([]byte("."))
 	mac.Write([]byte(tsRaw))
 	mac.Write([]byte("."))
 	mac.Write([]byte(body))
-	sig := "t=" + tsRaw + ",v1=" + hex.EncodeToString(mac.Sum(nil))
+	sig := "v1," + base64.StdEncoding.EncodeToString(mac.Sum(nil))
 	req, _ := http.NewRequest(http.MethodPost, base+"/ingest/render", bytes.NewReader([]byte(body)))
-	req.Header.Set("Render-Webhook-Id", "delivery-"+tsRaw+"-"+strconv.Itoa(int(time.Now().UnixNano())))
-	req.Header.Set("Render-Webhook-Timestamp", tsRaw)
-	req.Header.Set("Render-Webhook-Signature", sig)
+	req.Header.Set("Webhook-Id", id)
+	req.Header.Set("Webhook-Timestamp", tsRaw)
+	req.Header.Set("Webhook-Signature", sig)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

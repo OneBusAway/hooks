@@ -21,9 +21,9 @@ func TestIsHopByHop(t *testing.T) {
 	preserved := []string{
 		"Content-Type",
 		"User-Agent",
-		"Render-Webhook-Signature",
-		"Render-Webhook-Id",
-		"Render-Webhook-Timestamp",
+		"Webhook-Signature",
+		"Webhook-Id",
+		"Webhook-Timestamp",
 		"X-Hooks-Signature",
 		"Stripe-Signature",
 		"X-Custom",

@@ -4,12 +4,13 @@
 
 Every configured source MUST declare a registered `Verifier`. There is no opt-in for unsigned providers; the loader fails startup if a source has no verifier or names one that is not registered.
 
-For Render specifically:
+For Render specifically (per the [Standard Webhooks](https://www.standardwebhooks.com/) spec Render adopted):
 
-- The relay computes `HMAC-SHA256(secret, "<timestamp>.<body>")` and compares it with the value carried in the `Render-Webhook-Signature` header (`t=…,v1=…`).
-- Comparison is constant-time (`hmac.Equal`).
+- The relay computes `HMAC-SHA256(secret, "<id>.<timestamp>.<body>")` over the raw values of the `webhook-id` and `webhook-timestamp` headers and the request body.
+- The `webhook-signature` header carries a space-separated list of `v1,<base64>` tokens (multiple entries support key rotation). We match against any v1 entry, base64-decoded, with `hmac.Equal` for constant-time compare.
 - Any timestamp more than 5 minutes from the server's current UTC time is rejected (default; `skew_window` overrides per source).
-- The captured `delivery_id` is the `Render-Webhook-Id` header.
+- The captured `delivery_id` is the `webhook-id` header value.
+- Secrets in the canonical Standard Webhooks `whsec_<base64>` form are decoded to raw bytes before HMAC; bare strings are used verbatim.
 
 Failed verification produces HTTP 401 with no body. Logs include only the source name and a 4-byte hex prefix of the body's sha256 — never the body, never the signature, never the secret.
 

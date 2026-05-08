@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
-	"encoding/hex"
+	"encoding/base64"
 	"io"
 	"log/slog"
 	"net/http"
@@ -75,16 +75,19 @@ func TestServerIngestEndToEnd(t *testing.T) {
 	body := []byte(`{"event":"deploy"}`)
 	now := time.Now()
 	tsRaw := strconv.FormatInt(now.Unix(), 10)
+	id := "delivery-1"
 	mac := hmac.New(sha256.New, []byte("shhh"))
+	mac.Write([]byte(id))
+	mac.Write([]byte("."))
 	mac.Write([]byte(tsRaw))
 	mac.Write([]byte("."))
 	mac.Write(body)
-	sig := "t=" + tsRaw + ",v1=" + hex.EncodeToString(mac.Sum(nil))
+	sig := "v1," + base64.StdEncoding.EncodeToString(mac.Sum(nil))
 
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/ingest/render", strings.NewReader(string(body)))
-	req.Header.Set("Render-Webhook-Id", "delivery-1")
-	req.Header.Set("Render-Webhook-Timestamp", tsRaw)
-	req.Header.Set("Render-Webhook-Signature", sig)
+	req.Header.Set("Webhook-Id", id)
+	req.Header.Set("Webhook-Timestamp", tsRaw)
+	req.Header.Set("Webhook-Signature", sig)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
