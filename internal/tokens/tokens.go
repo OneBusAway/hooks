@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebusaway/hooks/internal/secret"
 	"github.com/onebusaway/hooks/internal/store"
 	"golang.org/x/crypto/argon2"
 )
@@ -42,11 +43,10 @@ type IssueResult struct {
 // Generate creates a new token plaintext (URL-safe base64 of 32 random bytes)
 // and its Argon2id hash, returning a fresh ID.
 func Generate(name string, scopes []string) (IssueResult, error) {
-	var raw [32]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return IssueResult{}, fmt.Errorf("rand: %w", err)
+	plaintext, err := secret.NewRandom()
+	if err != nil {
+		return IssueResult{}, err
 	}
-	plaintext := base64.RawURLEncoding.EncodeToString(raw[:])
 	hash, err := Hash(plaintext)
 	if err != nil {
 		return IssueResult{}, err
@@ -76,7 +76,7 @@ func Verify(plaintext, encoded string) (bool, error) {
 		return false, err
 	}
 	got := argon2.IDKey([]byte(plaintext), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
-	return constantTimeEqual(got, digest), nil
+	return secret.Equal(got, digest), nil
 }
 
 func encode(salt, digest []byte) string {
@@ -101,17 +101,6 @@ func decode(s string) (salt, digest []byte, err error) {
 		return nil, nil, fmt.Errorf("digest: %w", err)
 	}
 	return salt, digest, nil
-}
-
-func constantTimeEqual(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	var d byte
-	for i := range a {
-		d |= a[i] ^ b[i]
-	}
-	return d == 0
 }
 
 // ParseScopes accepts a comma-separated string and returns trimmed,

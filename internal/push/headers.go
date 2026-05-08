@@ -2,8 +2,11 @@ package push
 
 import "strings"
 
-// hopByHopHeaders enumerates the standard hop-by-hop headers we strip from
-// captured upstream headers before re-emitting on outbound POSTs.
+// hopByHopHeaders enumerates the RFC 7230 hop-by-hop headers, plus Host /
+// Content-Length which we always recompute on outbound. Per the push-delivery
+// spec, EVERYTHING ELSE captured from the original delivery must pass through
+// — including provider-supplied signature headers, which consumers ignore in
+// favor of X-Hooks-Signature but may use for debugging.
 var hopByHopHeaders = map[string]bool{
 	"connection":          true,
 	"keep-alive":          true,
@@ -13,13 +16,8 @@ var hopByHopHeaders = map[string]bool{
 	"trailer":             true,
 	"transfer-encoding":   true,
 	"upgrade":             true,
-	// Headers we ALWAYS overwrite on outbound:
-	"host":           true,
-	"content-length": true,
-	// Provider-supplied signature must not leak forward.
-	"render-webhook-signature": true,
-	"render-webhook-id":        true,
-	"render-webhook-timestamp": true,
+	"host":                true,
+	"content-length":      true,
 }
 
 // IsHopByHop reports whether name is a header we should strip from forwarded

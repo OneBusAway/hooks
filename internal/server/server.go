@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
@@ -179,6 +178,3 @@ func (s *Server) Stop(ctx context.Context) error {
 func (s *Server) Close() error {
 	return s.Store.Close()
 }
-
-// silenced
-var _ = os.Stderr

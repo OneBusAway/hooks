@@ -150,6 +150,37 @@ func TestInspectorRejectsNonAdmin(t *testing.T) {
 	}
 }
 
+func TestInspectorRevokedCookieRedirectsAndClears(t *testing.T) {
+	f := newFixture(t)
+	f.login(t, f.admin)
+
+	tok, err := f.st.Tokens().LookupByPlaintext(context.Background(), f.admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.st.Tokens().Revoke(context.Background(), tok.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, _ := f.get(t, "/inspector")
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("expected redirect, got %d", resp.StatusCode)
+	}
+	if loc := resp.Header.Get("Location"); !strings.Contains(loc, "/inspector/login") {
+		t.Fatalf("expected redirect to login, got %q", loc)
+	}
+	// Cookie should be cleared.
+	cleared := false
+	for _, c := range resp.Cookies() {
+		if c.Name == "hooks_inspector_token" && (c.MaxAge < 0 || c.Value == "") {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Fatalf("expected Set-Cookie to clear hooks_inspector_token, got %v", resp.Header.Values("Set-Cookie"))
+	}
+}
+
 func TestInspectorIndexShowsEvents(t *testing.T) {
 	f := newFixture(t)
 	f.login(t, f.admin)

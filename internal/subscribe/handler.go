@@ -37,9 +37,8 @@ import (
 
 // Defaults documented in design.md.
 const (
-	DefaultKeepalive   = 30 * time.Second
-	DefaultBatchLimit  = 1000
-	configuredSourceCheck = "configured_source_check"
+	DefaultKeepalive  = 30 * time.Second
+	DefaultBatchLimit = 1000
 )
 
 // Handler serves /subscribe/<source>.

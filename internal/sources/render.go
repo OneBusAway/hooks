@@ -60,19 +60,18 @@ func (v *renderVerifier) Verify(headers http.Header, body []byte) (time.Time, st
 	if tsRaw == "" {
 		return time.Time{}, "", fmt.Errorf("%w: %s", ErrMissingHeader, renderHeaderTimestamp)
 	}
-	tsSec, err := strconv.ParseInt(tsRaw, 10, 64)
+	tsNum, err := strconv.ParseInt(tsRaw, 10, 64)
 	if err != nil {
 		return time.Time{}, "", fmt.Errorf("%w: %s: %v", ErrMalformedHeader, renderHeaderTimestamp, err)
 	}
-	tsMillis := tsSec
-	// Render historically sent unix milliseconds in some payloads; if the
-	// number looks like a millisecond timestamp (>= year 2001 in seconds is
-	// fine, but >= 13 digits is conclusively ms), interpret as ms.
+	// Render's webhook signing string uses the raw header value, but we also
+	// need to surface the timestamp as a Go time.Time. A 13+ digit value is
+	// unambiguously milliseconds; anything shorter is treated as seconds.
 	var providerTime time.Time
-	if tsRaw != "" && len(tsRaw) >= 13 {
-		providerTime = time.Unix(0, tsMillis*int64(time.Millisecond)).UTC()
+	if len(tsRaw) >= 13 {
+		providerTime = time.UnixMilli(tsNum).UTC()
 	} else {
-		providerTime = time.Unix(tsSec, 0).UTC()
+		providerTime = time.Unix(tsNum, 0).UTC()
 	}
 
 	sigHeader := headers.Get(renderHeaderSignature)

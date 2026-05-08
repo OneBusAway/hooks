@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/onebusaway/hooks/internal/store"
@@ -25,16 +26,24 @@ func TokenFrom(ctx context.Context) (store.Token, bool) {
 	return t, ok
 }
 
+// TouchInterval is the minimum gap between consecutive last_used_at writes
+// for the same token. Without this debounce, every authenticated request
+// becomes a SQLite write.
+const TouchInterval = time.Minute
+
 // Authenticator validates bearer tokens and attaches them to the request
 // context. The required scope is supplied by RequireScope or RequireSourceOrAdmin.
 type Authenticator struct {
 	Tokens store.TokenStore
 	Now    func() time.Time
+
+	touchMu       sync.Mutex
+	lastTouchedAt map[string]time.Time
 }
 
 // New returns an Authenticator using the real wall clock.
 func New(ts store.TokenStore) *Authenticator {
-	return &Authenticator{Tokens: ts, Now: time.Now}
+	return &Authenticator{Tokens: ts, Now: time.Now, lastTouchedAt: map[string]time.Time{}}
 }
 
 // Resolve looks up the bearer token from r and returns it, or an error.
@@ -43,7 +52,16 @@ func (a *Authenticator) Resolve(r *http.Request) (store.Token, error) {
 	if err != nil {
 		return store.Token{}, err
 	}
-	tok, err := a.Tokens.LookupByPlaintext(r.Context(), plaintext)
+	return a.ResolvePlaintext(r.Context(), plaintext)
+}
+
+// ResolvePlaintext is the variant used by callers (e.g. the inspector cookie
+// flow) that already have the plaintext outside an Authorization header.
+func (a *Authenticator) ResolvePlaintext(ctx context.Context, plaintext string) (store.Token, error) {
+	if plaintext == "" {
+		return store.Token{}, errMissingToken
+	}
+	tok, err := a.Tokens.LookupByPlaintext(ctx, plaintext)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return store.Token{}, errInvalidToken
@@ -53,9 +71,22 @@ func (a *Authenticator) Resolve(r *http.Request) (store.Token, error) {
 	if tok.RevokedAt != nil {
 		return store.Token{}, errInvalidToken
 	}
-	// Update last_used_at best-effort; do not block the request on it.
-	_ = a.Tokens.TouchLastUsed(r.Context(), tok.ID, a.Now())
+	a.maybeTouch(ctx, tok.ID)
 	return tok, nil
+}
+
+// maybeTouch persists last_used_at at most once per TouchInterval per token,
+// best-effort.
+func (a *Authenticator) maybeTouch(ctx context.Context, id string) {
+	now := a.Now()
+	a.touchMu.Lock()
+	if prev, ok := a.lastTouchedAt[id]; ok && now.Sub(prev) < TouchInterval {
+		a.touchMu.Unlock()
+		return
+	}
+	a.lastTouchedAt[id] = now
+	a.touchMu.Unlock()
+	_ = a.Tokens.TouchLastUsed(ctx, id, now)
 }
 
 // RequireScope returns a middleware that admits only requests whose token has

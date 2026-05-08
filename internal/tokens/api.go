@@ -1,7 +1,6 @@
 package tokens
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -140,6 +139,3 @@ func toListEntry(t store.Token) listEntry {
 		RevokedAt:  t.RevokedAt,
 	}
 }
-
-// silence unused
-var _ = context.Background

@@ -3,9 +3,22 @@
 package secret
 
 import (
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 )
+
+// NewRandom returns 32 cryptographically random bytes encoded as URL-safe
+// unpadded base64 (43 ASCII characters), suitable for bearer tokens and HMAC
+// signing secrets.
+func NewRandom() (string, error) {
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b[:]), nil
+}
 
 // String is a credential that must never appear in logs, structured-log
 // fields, or JSON output. Convert to plaintext explicitly via Reveal.

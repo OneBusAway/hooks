@@ -13,11 +13,9 @@
 package ingest
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -199,15 +197,3 @@ func BuildBindings(specs map[string]BuildSpec) map[string]SourceBinding {
 	return out
 }
 
-// Used by tests to peek at the configured sources.
-func (h *Handler) Sources() []string {
-	out := make([]string, 0, len(h.bindings))
-	for k := range h.bindings {
-		out = append(out, k)
-	}
-	return out
-}
-
-// silence unused-import alarm during refactors
-var _ = context.Background
-var _ = fmt.Sprintf

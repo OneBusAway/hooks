@@ -136,6 +136,25 @@ func TestRenderFutureTimestamp(t *testing.T) {
 	}
 }
 
+func TestRenderMillisecondTimestamp(t *testing.T) {
+	body := []byte("hello")
+	now := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
+	tsMs := strconv.FormatInt(now.UnixMilli(), 10)
+	if len(tsMs) < 13 {
+		t.Fatalf("test setup: expected 13+ digit ms timestamp, got %q", tsMs)
+	}
+	sig := sign("shhh", tsMs, body)
+	v := mustVerify(t, Options{Now: func() time.Time { return now }})
+
+	got, _, err := v.Verify(renderHeaders("d", tsMs, sig), body)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if !got.Equal(now) {
+		t.Fatalf("provider time = %v, want %v", got, now)
+	}
+}
+
 func TestRenderConfigurableSkew(t *testing.T) {
 	now := time.Now()
 	tsTime := now.Add(-10 * time.Minute)

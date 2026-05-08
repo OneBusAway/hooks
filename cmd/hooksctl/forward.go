@@ -17,6 +17,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/onebusaway/hooks/internal/push"
 )
 
 // forwardTestCtx is non-nil only in tests; production paths derive their
@@ -115,10 +117,7 @@ func streamFromCursor(ctx context.Context, g globals, source string, cursor *int
 				current = map[string]string{}
 				continue
 			}
-			if err := forwardOne(ctx, cli, to, current); err != nil {
-				if exitOnError {
-					return err
-				}
+			if err := forwardOne(ctx, cli, to, current, exitOnError); err != nil {
 				return err
 			}
 			*cursor = seq
@@ -135,7 +134,7 @@ func streamFromCursor(ctx context.Context, g globals, source string, cursor *int
 	return scanner.Err()
 }
 
-func forwardOne(ctx context.Context, cli *http.Client, to string, msg map[string]string) error {
+func forwardOne(ctx context.Context, cli *http.Client, to string, msg map[string]string, exitOnError bool) error {
 	var p struct {
 		DeliveryID        string            `json:"delivery_id"`
 		ProviderTimestamp time.Time         `json:"provider_timestamp"`
@@ -156,7 +155,7 @@ func forwardOne(ctx context.Context, cli *http.Client, to string, msg map[string
 			return err
 		}
 		for k, v := range p.Headers {
-			if isHopByHop(k) {
+			if push.IsHopByHop(k) {
 				continue
 			}
 			req.Header.Set(k, v)
@@ -170,6 +169,9 @@ func forwardOne(ctx context.Context, cli *http.Client, to string, msg map[string
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+			if exitOnError {
+				return fmt.Errorf("transport: %w", err)
+			}
 			fmt.Fprintf(os.Stderr, "forward: %v\n", err)
 			if !sleepWithCtx(ctx, attemptBackoff(attempt)) {
 				return ctx.Err()
@@ -179,6 +181,9 @@ func forwardOne(ctx context.Context, cli *http.Client, to string, msg map[string
 		_ = resp.Body.Close()
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			return nil
+		}
+		if exitOnError {
+			return fmt.Errorf("target returned %d", resp.StatusCode)
 		}
 		fmt.Fprintf(os.Stderr, "forward: target returned %d\n", resp.StatusCode)
 		if !sleepWithCtx(ctx, attemptBackoff(attempt)) {
@@ -257,11 +262,3 @@ func saveCursor(path string, seq int64) {
 	_ = os.WriteFile(path, []byte(strconv.FormatInt(seq, 10)+"\n"), 0o600)
 }
 
-func isHopByHop(name string) bool {
-	switch strings.ToLower(name) {
-	case "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
-		"te", "trailer", "transfer-encoding", "upgrade", "host", "content-length":
-		return true
-	}
-	return false
-}

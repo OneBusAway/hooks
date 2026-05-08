@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -190,7 +189,7 @@ sources:
 	defer func() { _ = st.Close() }()
 	tokens.AttachVerifier(st)
 
-	res, err := tokens.Issue(context.Background(), st.Tokens(), *tokenName, []string{"admin"})
+	res, err := tokens.Issue(context.Background(), st.Tokens(), *tokenName, []string{store.ScopeAdmin})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "init: issue token: %v\n", err)
 		return 1
@@ -303,8 +302,6 @@ func runVerify(args []string) int {
 	if mismatches > 0 {
 		return 1
 	}
-	if errors.Is(nil, nil) {
-		fmt.Println("verify: ok")
-	}
+	fmt.Println("verify: ok")
 	return 0
 }

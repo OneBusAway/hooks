@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 )
 
 const usageText = `hooksctl: developer CLI for hooks
@@ -103,9 +104,9 @@ func splitGlobalFlags(args []string, g *globals) []string {
 		case "--json":
 			g.JSON = true
 		default:
-			if v, ok := after(a, "--server="); ok {
+			if v, ok := strings.CutPrefix(a, "--server="); ok {
 				g.Server = v
-			} else if v, ok := after(a, "--token="); ok {
+			} else if v, ok := strings.CutPrefix(a, "--token="); ok {
 				g.Token = v
 			} else {
 				out = append(out, a)
@@ -113,13 +114,6 @@ func splitGlobalFlags(args []string, g *globals) []string {
 		}
 	}
 	return out
-}
-
-func after(s, prefix string) (string, bool) {
-	if len(s) >= len(prefix) && s[:len(prefix)] == prefix {
-		return s[len(prefix):], true
-	}
-	return "", false
 }
 
 func env(name, def string) string {

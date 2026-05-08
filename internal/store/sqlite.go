@@ -326,13 +326,6 @@ func (s *SQLite) SetTokenHashCompare(fn HashLookup) {
 	s.tokenHash = fn
 }
 
-// tokenHash is package state set at process start; nil means LookupByPlaintext
-// always returns ErrNotFound (used in tests that exercise other code paths).
-//
-// (We make it a struct field rather than a global so multiple SQLite instances
-// in tests can have independent verifiers.)
-//
-
 func (s *SQLite) Insert(ctx context.Context, t Token) error {
 	scopes := strings.Join(t.Scopes, ",")
 	_, err := s.db.ExecContext(ctx,
@@ -703,10 +696,3 @@ func cloneHeaders(in map[string]string) map[string]string {
 	}
 	return out
 }
-
-// tokenHash is held on the SQLite struct via a method-set field declared
-// inline below to avoid forward-declaration; placed here to satisfy methods
-// above that reference s.tokenHash.
-
-// (Compile-time assertion that SQLite implements all three interfaces lives
-// in adapters.go to avoid clutter here.)

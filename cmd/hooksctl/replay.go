@@ -10,6 +10,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/onebusaway/hooks/internal/push"
 )
 
 func cmdReplay(g globals, args []string) int {
@@ -79,7 +81,7 @@ func cmdReplay(g globals, args []string) int {
 	body, _ := base64.StdEncoding.DecodeString(p.Body)
 	out, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, *to, bytes.NewReader(body))
 	for k, v := range p.Headers {
-		if isHopByHop(k) {
+		if push.IsHopByHop(k) {
 			continue
 		}
 		out.Header.Set(k, v)

@@ -241,7 +241,9 @@ func buildOutboundRequest(
 	if err != nil {
 		return nil, err
 	}
-	// Copy captured headers, skipping hop-by-hop and provider signatures.
+	// Copy captured headers, skipping only hop-by-hop. Provider signature
+	// headers (e.g. Render-Webhook-*) pass through verbatim per the
+	// push-delivery spec; consumers verify via X-Hooks-Signature instead.
 	for k, v := range captured {
 		if IsHopByHop(k) {
 			continue

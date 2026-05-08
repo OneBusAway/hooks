@@ -62,8 +62,13 @@ func appendEv(t *testing.T, st *store.SQLite, source, deliveryID string, body []
 		Source:            source,
 		DeliveryID:        deliveryID,
 		ProviderTimestamp: time.Now(),
-		Headers:           map[string]string{"Content-Type": "application/json", "Connection": "keep-alive"},
-		Body:              body,
+		Headers: map[string]string{
+			"Content-Type":             "application/json",
+			"Connection":               "keep-alive",
+			"Render-Webhook-Signature": "t=1,v1=ab",
+			"Render-Webhook-Id":        deliveryID,
+		},
+		Body: body,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -140,6 +145,12 @@ func TestDispatcherAdvancesCursorOn2xx(t *testing.T) {
 		}
 		if r.Headers.Get("X-Hooks-Delivery-Id") == "" {
 			t.Fatalf("X-Hooks-Delivery-Id missing")
+		}
+		if r.Headers.Get("Render-Webhook-Signature") == "" {
+			t.Fatalf("provider Render-Webhook-Signature was stripped (spec says only hop-by-hop)")
+		}
+		if r.Headers.Get("Render-Webhook-Id") == "" {
+			t.Fatalf("provider Render-Webhook-Id was stripped (spec says only hop-by-hop)")
 		}
 	}
 

@@ -19,11 +19,9 @@
 package push
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"math/rand"
 	"net/http"
@@ -263,7 +261,3 @@ func (m *Manager) ensureWorker(sub store.PushSubscription) {
 
 	go w.run()
 }
-
-// silence imports in trimmed builds
-var _ = bytes.NewReader
-var _ = io.Discard
