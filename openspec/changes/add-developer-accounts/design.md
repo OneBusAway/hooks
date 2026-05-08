@@ -209,11 +209,124 @@ Excess requests return HTTP 429 with `Retry-After: <seconds>`. Buckets live in p
 
 Rejected requests return HTTP 400 with a generic "password does not meet policy" message; the server logs the *failed-policy reason* (length / contains-email) but never the attempted plaintext. We deliberately do not integrate HIBP-style breach corpora in v1; the goal is "block the obvious mistakes", not "block all known-breached passwords".
 
+### Storage layer: sqlc-generated queries
+
+We adopt [sqlc](https://sqlc.dev) (engine `sqlite`) as the source of truth for every SQL query in `internal/store`. This change is the moment to do it: we are adding five new tables (`users`, `user_sessions`, `invites`, `device_pairings`, `audit_events`), altering two existing tables (`listener_tokens`, `push_subscriptions`), and introducing roughly two dozen new queries (owner-filtered token and subscription lookups, cascading deactivation, audit insert/read, invite lifecycle, device-pairing state transitions). Hand-rolling that volume of SQL alongside the existing hand-rolled paths gives us two storage idioms in the same package and twice the surface for typos and stale-after-refactor bugs. sqlc gives us compile-time-checked types end-to-end with effectively no runtime cost (the generated code is a thin wrapper over `database/sql`).
+
+**Scope note.** This change moves *all* storage to sqlc, not only the newly added tables. The existing `events`, `listener_tokens`, and `push_subscriptions` queries are also rewritten as `.sql` files and regenerated. Mixing two query patterns in `internal/store` is worse than uniformly using sqlc; doing the migration in this change keeps `internal/store/sqlite.go` from having to grow to encompass both styles. The existing `internal/store/contract_test.go` and `internal/store/latest_test.go` are interface-level tests and continue to pass against the rewrite without modification — that is the regression baseline for "no behavior change to existing storage callers."
+
+#### Layout
+
+```
+sqlc.yaml                                    # repo root, version: "2"
+internal/store/
+  ├─ types.go                                # public types (Event, Token, …) + new types (User, Session, Invite, DevicePairing, AuditEvent). Unchanged in shape; the existing public surface is preserved.
+  ├─ adapters.go                             # public-interface adapters; gains new ones for the new stores.
+  ├─ sqlite.go                               # boot, *sql.DB pool, pragmas, migrate(), interface impls — much shorter; delegates queries to sqlc.
+  ├─ migrations.go                           # idempotent ALTER TABLE deltas for upgrading existing v1 deployments (see "Schema vs migrations" below).
+  ├─ schema.sql                              # canonical fully-migrated schema; sqlc reads this for type inference; embedded into binary for fresh-DB CREATE TABLE. Lives OUTSIDE queries/ so sqlc does not parse it twice.
+  ├─ queries/
+  │   ├─ events.sql                          # rewritten queries for the events table.
+  │   ├─ tokens.sql                          # listener_tokens queries (with the new owner/kind/ephemeral/expires_at columns).
+  │   ├─ push.sql                            # push_subscriptions queries (with owner column).
+  │   ├─ users.sql                           # NEW.
+  │   ├─ sessions.sql                        # NEW.
+  │   ├─ invites.sql                         # NEW.
+  │   ├─ device_pairings.sql                 # NEW.
+  │   └─ audit.sql                           # NEW.
+  └─ sqlcgen/                                # checked in; regenerated via `go generate ./...`.
+      ├─ db.go                               # DBTX, *Queries, WithTx.
+      ├─ models.go                           # one struct per table.
+      └─ <name>.sql.go                       # one file per query .sql input.
+```
+
+`schema.sql` lives one level above the `queries/` directory on purpose. sqlc's `queries:` setting walks every `.sql` file in the directory it points at, so a `schema.sql` co-located with the query files would be read twice — once as schema and again (without `-- name:` annotations) as a query file — and sqlc would either error on the unrecognized DDL or, worse, silently re-parse the CREATEs. Keeping the two paths disjoint side-steps that.
+
+`sqlc.yaml`:
+
+```yaml
+version: "2"
+sql:
+  - engine: sqlite
+    schema: internal/store/schema.sql
+    queries: internal/store/queries
+    gen:
+      go:
+        package: sqlcgen
+        out: internal/store/sqlcgen
+        emit_interface: true        # so wrapper code can mock *Queries in tests if needed
+        emit_json_tags: false       # we do not serialize generated structs over the wire
+        emit_prepared_queries: false
+        # We deliberately do NOT enable emit_pointers_for_null_types: it is a
+        # global toggle (per-column control would require an `overrides:` block
+        # per nullable column, which we don't want either). We keep sqlc's
+        # defaults (sql.NullInt64 / sql.NullString) so the wrapper layer is the
+        # single place that converts to the public types' *time.Time / *string
+        # shapes. See "Type mapping" below.
+```
+
+A `//go:generate go tool sqlc generate` directive in `internal/store/sqlc_gen.go` keeps regeneration discoverable. CI runs `sqlc diff` (added to `make lint`) so a query-without-regenerated-code change fails the build.
+
+#### Schema vs migrations
+
+`internal/store/schema.sql` is the **canonical fully-migrated schema** — what a brand-new database looks like after every migration has been applied. sqlc reads this file at codegen time for type inference; the runtime also applies it verbatim on every boot via `db.ExecContext(schemaSQL)` (the file is `//go:embed`-ed into `sqlite.go`). Every `CREATE TABLE` and `CREATE INDEX` in the file uses `IF NOT EXISTS` so re-applying is idempotent.
+
+`internal/store/migrations.go` carries the "delta" steps that bring an existing v1 deployment forward — specifically, the `ALTER TABLE listener_tokens ADD COLUMN owner_user_id …` and the four sibling additions, plus `ALTER TABLE push_subscriptions ADD COLUMN owner_user_id …`. SQLite has no `ADD COLUMN IF NOT EXISTS`; each delta probes `PRAGMA table_info(<table>)` and only issues the ALTER when the column is absent. Deltas run *after* the canonical schema apply, so a fresh DB sees them as no-ops (the columns already exist from the canonical CREATE TABLE) and an existing DB sees them add the missing columns. CHECK constraints on existing rows: SQLite enforces CHECK constraints at write time, not at ALTER time; the backfill writes valid values (`kind='listener'`) so the CHECK never fires on existing rows.
+
+We considered switching to a versioned migration runner (`golang-migrate`, `goose`). Rejected for v1: the codebase has exactly one tool-applied migration today (the implicit "create-if-missing" inline schema), the additive delta is small, and a third-party migration runner would be more new infrastructure than the change warrants. The probe-and-ALTER pattern remains correct as long as we never need to drop or rename a column; if we hit that, we revisit.
+
+#### Type mapping conventions
+
+sqlc's SQLite engine maps types straightforwardly:
+
+| SQL column                         | sqlc-generated Go type | Wrapper-layer public type      |
+|------------------------------------|------------------------|--------------------------------|
+| `INTEGER NOT NULL` (UNIX nanos)    | `int64`                | `time.Time` (UTC)              |
+| `INTEGER` (nullable, UNIX nanos)   | `sql.NullInt64`        | `*time.Time` (UTC, nil if invalid) |
+| `INTEGER NOT NULL` (numeric)       | `int64`                | `int64`                        |
+| `TEXT NOT NULL`                    | `string`               | `string`                       |
+| `TEXT` (nullable)                  | `sql.NullString`       | `*string` or `""` (per field)  |
+| `TEXT` containing JSON             | `string`               | `[]string` / `map[string]any` (wrapper marshals/unmarshals) |
+| `TEXT` comma-separated scopes      | `string`               | `[]string` (existing splitScopes/joinScopes helpers) |
+| `BOOL NOT NULL` (`INTEGER 0/1`)    | `int64`                | `bool` (wrapper converts)      |
+| `BLOB NOT NULL`                    | `[]byte`               | `[]byte`                       |
+
+We deliberately keep sqlc's defaults (no `emit_pointers_for_null_types`) so the conversion happens in exactly one place — the wrapper layer in `sqlite.go` and friends. Public callers continue to see `time.Time`, `*time.Time`, `[]string`, `bool`. Generated code stays close to the SQL.
+
+The existing custom encoding for the `scopes` column (comma-separated TEXT) is preserved unchanged; the wrapper helpers `splitScopes` and `joinScopes` already exist (`sqlite.go:642`). New JSON-shaped TEXT columns (`invites.default_scopes`, `device_pairings.requested_scopes`, `audit_events.metadata`) are marshaled/unmarshaled in the wrapper using `encoding/json`. Empty arrays marshal to `[]`, never `null`, so `IS NULL` does not have to be a meaningful state for those columns at the SQL layer; they are `TEXT NOT NULL DEFAULT '[]'` (or `'{}'` for object-shaped metadata).
+
+#### Transactions
+
+Every multi-statement invariant in the change runs through `*sql.DB.BeginTx` → `q.WithTx(tx)` → multiple sqlc-generated calls → `tx.Commit()`. Specifically:
+
+- `EventStore.Append` — dedupe SELECT, `MAX(sequence)+1`, INSERT (existing invariant, preserved verbatim).
+- `Signup` — `MarkInviteConsumed` + `InsertUser` + audit `InsertEvent` for `user.create` and `invite.consume`. Roll back if user-insert fails; the invite stays unconsumed.
+- `DeactivateUser` — `SetUserDeactivatedAt` + `RevokeTokensByOwner` + `PauseSubscriptionsByOwner` + audit `InsertEvent` for `user.deactivate`. Last-admin guard runs as `CountActiveAdminsExcluding($id) :one` before opening the tx and as a re-check inside it (the second check protects against a race where two admins deactivate each other concurrently; the second tx sees zero admins and 409s).
+- `BootstrapInviteEnsure` — within a tx: `SELECT bootstrap row` → if missing or expired, `DELETE` + `INSERT` with fresh code and `now+24h`.
+- `DevicePairingApprove` — within a tx: `GetDevicePairingByUserCode FOR UPDATE`-equivalent (see below) + `InsertToken` + `UpdateDevicePairingApproved` (sets `status='approved_unfetched'`, `plaintext_token=?`, `token_id=?`) + audit `InsertEvent`.
+
+SQLite under `MaxOpenConns=1` serializes writers; we do not need explicit row-level locking. The single-writer invariant is documented in CLAUDE.md and unchanged by this work.
+
+#### What stays hand-written (and why)
+
+A few paths remain in Go even with sqlc-generated SQL underneath:
+
+- **`TokenStore.LookupByPlaintext`** — sqlc generates `ListActiveTokens :many`; the wrapper iterates the rows and calls the injected `s.tokenHash(plaintext, encoded)` per row to do the Argon2id constant-time compare. This loop cannot be expressed as a SQL query (the hash function lives in `internal/tokens` to keep `internal/store` argon2-free; CLAUDE.md captures the rationale). Same pattern applies to `SessionStore.LookupByID` (SHA-256 compare) and `UserStore.AuthenticatePassword` (Argon2id over `password_hash`).
+- **`Append`'s headers and body sha256 computation** — staged in Go (`json.Marshal(headers)`, `sha256.Sum256(body)`) before the sqlc-generated insert is called. Putting that in SQL would mean letting SQLite hash the body, which sqlc's SQLite engine does not have a clean way to bind anyway.
+- **Time conversion** — `time.Time` ↔ UNIX nanoseconds happens at the wrapper boundary, not inside sqlc-generated code.
+- **Cascading-revoke metadata** — the audit row's `metadata` JSON (counts of revoked tokens, paused subscriptions) is composed in Go from the `RowsAffected()` returns of the prior statements in the tx.
+
+These are the only SQL-adjacent code paths in Go. Everything else — every parameterized SELECT, INSERT, UPDATE, DELETE — is generated.
+
+#### Migration of existing tests
+
+`internal/store/contract_test.go` and `internal/store/latest_test.go` continue to drive the public interface; they pass against the sqlc-backed implementation unchanged, which serves as the safety net that the rewrite preserves observable behavior. We add `internal/store/sqlcgen_test.go` exercising the new sqlc-generated methods directly (one happy-path call per generated method, against an in-memory SQLite database initialized from `schema.sql`) — small but it catches regression in the canonical schema and codegen output.
+
 ### Data model summary
 
 ```
-users              (id, email UNIQUE NOCASE, name, role, password_hash,
-                    default_scopes JSON, created_at, deactivated_at, external_id NULLABLE)
+users              (id, email [+ UNIQUE INDEX on email COLLATE NOCASE], name, role,
+                    password_hash, default_scopes JSON, created_at, deactivated_at, external_id NULLABLE)
 user_sessions      (id, user_id FK, secret_hash, created_at, last_used_at,
                     expires_at, user_agent, ip)
 invites            (code UNIQUE, role, default_scopes JSON, created_by_user_id FK NULLABLE,
@@ -243,16 +356,18 @@ All persisted secret material (passwords, token hashes, session secret hashes, p
 - **Legacy raw-bearer cookie**: existing inspector users have a cookie carrying their admin token plaintext. → Decision: the legacy cookie continues to authenticate **fully** (mutations included) for v1, with deprecation in v2. A "read-only legacy cookie" would silently break existing inspector mutation flows on day 1, which is exactly the kind of breakage the additive-migration story tries to avoid. New logins always create `user_sessions`; the legacy path is accept-on-read only, never set on a new login.
 - **Phishing the device-pairing approval**: an attacker starts a pairing and tricks the victim into typing the user code. → Mitigation: narrow-by-default scope (`account` only), approver-context display (UA, IP, requested scopes), explicit warning, and password re-entry requirement in the approval form. Each cheap individually; layered they raise the bar materially.
 - **Per-process rate-limit state**: in-process token buckets reset on restart. → Trade-off: acceptable for a single-process SQLite deployment; fits the existing operational posture. A future Redis-backed bucket can replace the implementation behind the same middleware contract without changing semantics.
+- **sqlc adoption scope**: the change replaces all hand-rolled SQL in `internal/store` (events, tokens, push) on top of adding the new tables, not just the new tables. → Trade-off: a one-time mechanical rewrite of ~10 existing query call-sites is the price; the win is one query pattern in the package, compile-time-checked end-to-end. The existing `contract_test.go` is the safety net that no observable behavior changes — if a contract test regresses, the sqlc rewrite is wrong, not the test. CI gains a `sqlc diff` step (in `make lint`) so a `.sql` change without regenerated code fails the build instead of producing a runtime mismatch.
+- **Schema-vs-migrations split**: `internal/store/schema.sql` describes the post-migration shape (canonical, used by sqlc); `migrations.go` carries idempotent ALTER deltas for existing v1 deployments. → Risk: someone edits the canonical file without adding the corresponding delta and breaks upgrades from existing deployments. → Mitigation: a unit test (`internal/store/migrations_test.go`) opens a SQLite DB, applies the *previous* (v1) schema, then runs `migrate()`, then asserts every column declared in `internal/store/schema.sql` is present. This catches the omission deterministically and is fast (in-memory DB).
 
 ## Migration Plan
 
-1. Ship the new tables (`users`, `user_sessions`, `invites`, `device_pairings`, `audit_events`) and the column additions (`listener_tokens.owner_user_id`, `listener_tokens.kind`, `listener_tokens.ephemeral`, `listener_tokens.expires_at`, `push_subscriptions.owner_user_id`) in a single migration. `IF NOT EXISTS` discipline so re-running is safe. Existing `listener_tokens` rows are backfilled with `kind='listener'` (preserving today's behavior — they all authenticate `/subscribe/*` and the inspector but not `/api/me/*`, which is correct because `/api/me/*` is a new surface).
+1. Land the canonical schema in `internal/store/schema.sql` — the new tables (`users`, `user_sessions`, `invites`, `device_pairings`, `audit_events`) and the column additions on `listener_tokens` and `push_subscriptions` are written into the canonical file. Run `go tool sqlc generate` and commit `internal/store/sqlcgen/`. `internal/store/migrations.go` ships the probe-and-ALTER deltas that bring an existing v1 database forward; a fresh DB sees them as no-ops because the canonical CREATE TABLE statements already include the new columns. `IF NOT EXISTS` discipline on every CREATE so re-running is safe. Existing `listener_tokens` rows are backfilled with `kind='listener'` (preserving today's behavior — they all authenticate `/subscribe/*` and the inspector but not `/api/me/*`, which is correct because `/api/me/*` is a new surface).
 2. On boot, if `users` is empty, ensure exactly one bootstrap invite exists (idempotent insert); if the existing bootstrap row is expired, replace it with a fresh code and a fresh 24h TTL. `hooks init` prints the signup URL; subsequent boots do nothing if an account exists.
 3. Existing system-owned admin tokens continue to work with their existing scopes. The release notes recommend admins:
    - Sign up via the bootstrap URL.
    - Mint themselves a PAT with `hooksctl login`.
    - Optionally `hooksctl token revoke <system-token>` once their PAT works.
-4. Rollback: drop the new tables and the new columns. The columns are nullable / defaulted and unused by old code, so a partial-rollback (only drop new tables, leave columns) is also safe.
+4. Rollback: drop the new tables and the new columns. The columns are nullable / defaulted and unused by old code, so a partial-rollback (only drop new tables, leave columns) is also safe. Rolling back the sqlc move specifically (the rewritten queries on existing tables) does not require a database action — it is a code-only revert. The on-disk rows are identical before and after the rewrite.
 5. No data backfill required for existing tokens or subscriptions — they remain `owner_user_id = NULL` with their existing scopes and authorize as today.
 
 ## Open Questions
