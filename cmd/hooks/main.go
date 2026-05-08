@@ -17,7 +17,10 @@ import (
 	"syscall"
 	"time"
 
+	"strings"
+
 	"github.com/onebusaway/hooks/internal/config"
+	"github.com/onebusaway/hooks/internal/invites"
 	"github.com/onebusaway/hooks/internal/prune"
 	"github.com/onebusaway/hooks/internal/server"
 	"github.com/onebusaway/hooks/internal/sources"
@@ -152,8 +155,12 @@ func runInit(args []string) int {
 	force := fs.Bool("force", false, "overwrite existing hooks.yaml")
 	dir := fs.String("dir", ".", "directory to scaffold into")
 	tokenName := fs.String("token-name", "operator", "name for the generated admin token")
+	serverURL := fs.String("server-url", "", "public URL for the printed signup link (env: HOOKS_PUBLIC_URL)")
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+	if *serverURL == "" {
+		*serverURL = os.Getenv("HOOKS_PUBLIC_URL")
 	}
 
 	configPath := filepath.Join(*dir, "hooks.yaml")
@@ -195,10 +202,53 @@ sources:
 		return 1
 	}
 
+	// Bootstrap signup invite: only ensure when the users table is empty.
+	// Re-running `hooks init --force` against a populated DB does NOT
+	// mint a fresh signup link — that would be confusing on existing
+	// deployments where accounts already exist.
+	bootstrapCode := ""
+	bootstrapTTL := ""
+	if n, err := st.CountActiveAdmins(context.Background()); err == nil && n == 0 {
+		// Also check the wider users table to handle the
+		// "every admin has been deactivated" edge case (still treated
+		// as "no admins, re-bootstrap is fine").
+		userCount := 0
+		users, _ := st.ListUsers(context.Background())
+		userCount = len(users)
+		if userCount == 0 {
+			now := time.Now().UTC()
+			inv, err := st.EnsureBootstrapInvite(context.Background(),
+				func() string {
+					c, _ := invites.NewCode()
+					return c
+				},
+				24*time.Hour, now,
+			)
+			if err == nil {
+				bootstrapCode = inv.Code
+				if inv.ExpiresAt != nil {
+					bootstrapTTL = inv.ExpiresAt.Sub(now).Round(time.Hour).String()
+				}
+			} else {
+				fmt.Fprintf(os.Stderr, "init: ensure bootstrap invite: %v\n", err)
+			}
+		}
+	}
+
 	fmt.Println("hooks init: ready.")
 	fmt.Printf("  config: %s\n", configPath)
 	fmt.Printf("  db:     %s\n", dbPath)
 	fmt.Printf("  admin token (shown ONCE): %s\n", res.Plaintext)
+	if bootstrapCode != "" {
+		base := *serverURL
+		if base == "" {
+			base = "http://localhost:8080  # set --server-url or HOOKS_PUBLIC_URL"
+		}
+		fmt.Printf("  signup: %s/signup?code=%s\n", strings.TrimRight(base, "/"), bootstrapCode)
+		if bootstrapTTL != "" {
+			fmt.Printf("          (single-use; expires in %s; auto-disables once any account exists)\n", bootstrapTTL)
+		}
+	}
 	fmt.Println()
 	fmt.Println("Next steps:")
 	fmt.Println("  1. Set RENDER_WEBHOOK_SECRET in your environment.")

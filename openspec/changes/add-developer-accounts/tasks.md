@@ -69,14 +69,14 @@ All new and altered tables live in `internal/store/schema.sql` (the canonical sc
 
 ## 6. Invites — admin endpoints + bootstrap
 
-- [ ] 6.1 `POST /api/invites` (admin): create invite with random 16-char base32 code, body `{role, default_scopes?, ttl?}`, default ttl 7d. For `role='admin'` the body MAY include `default_scopes` (stored, but unused at auth time; reserved for future role expansion). Record an `audit_events` row.
-- [ ] 6.2 `GET /api/invites` (admin): list pending and consumed; filter by `consumed=true|false`
-- [ ] 6.3 `DELETE /api/invites/{code}` (admin): hard-delete unconsumed invite; return 409 if consumed; record `audit_events`
-- [ ] 6.4 `POST /api/auth/signup` (unauthenticated) accepting `{code, email, name, password}`: validate invite freshness (404/410/409 for missing/expired/consumed), enforce password policy (`internal/users.ValidatePassword`), create user with role + default_scopes from the invite, mark invite consumed atomically (single transaction; rollback on user-insert failure). Record `audit_events` for `user.create` and `invite.consume`.
-- [ ] 6.5 Bootstrap-invite ensure-on-init: in `cmd/hooks` init path (and on server boot), if `users` is empty, call `InviteStore.EnsureBootstrap()` which inserts a `bootstrap=true, role=admin, expires_at=now+24h` row with a fresh code if no bootstrap row already exists; if a bootstrap row exists but is expired, replace it atomically.
+- [x] 6.1 `POST /api/invites` (admin): create invite with random 16-char base32 code, body `{role, default_scopes?, ttl?}`, default ttl 7d. For `role='admin'` the body MAY include `default_scopes` (stored, but unused at auth time; reserved for future role expansion). Record an `audit_events` row.
+- [x] 6.2 `GET /api/invites` (admin): list pending and consumed; filter by `consumed=true|false`
+- [x] 6.3 `DELETE /api/invites/{code}` (admin): hard-delete unconsumed invite; return 409 if consumed; record `audit_events`
+- [x] 6.4 `POST /api/auth/signup` (unauthenticated) accepting `{code, email, name, password}`: validate invite freshness (404/410/409 for missing/expired/consumed), enforce password policy (`internal/users.ValidatePassword`), create user with role + default_scopes from the invite, mark invite consumed atomically (single transaction; rollback on user-insert failure). Record `audit_events` for `user.create` and `invite.consume`.
+- [x] 6.5 Bootstrap-invite ensure-on-init: in `cmd/hooks` init path (and on server boot), if `users` is empty, call `InviteStore.EnsureBootstrap()` which inserts a `bootstrap=true, role=admin, expires_at=now+24h` row with a fresh code if no bootstrap row already exists; if a bootstrap row exists but is expired, replace it atomically.
 - [ ] 6.6 Bootstrap-invite consumption: on every successful signup, also mark any `bootstrap=true` invite as consumed; signup attempts using a consumed bootstrap code return 409; signup attempts using an expired bootstrap code return 410
 - [ ] 6.7 `cmd/hooks invite` subcommand (server-side): prints a signup URL for a freshly created (admin-scoped) invite by hitting the API with the local admin token loaded from disk
-- [ ] 6.8 `hooksctl invite create [--role user|admin] [--scopes render,...] [--ttl 7d]`, `hooksctl invite list [--include-consumed]`, `hooksctl invite revoke <code>` — CLI subcommands that hit `/api/invites` using the admin's PAT
+- [x] 6.8 `hooksctl invite create [--role user|admin] [--scopes render,...] [--ttl 7d]`, `hooksctl invite list [--include-consumed]`, `hooksctl invite revoke <code>` — CLI subcommands that hit `/api/invites` using the admin's PAT
 - [ ] 6.9 Tests: invite creation idempotency, bootstrap auto-insert idempotent, bootstrap consumed exactly once, expired bootstrap replaced on next init, expired invite rejected with 410, race test (two concurrent signups with same invite — exactly one succeeds), admin-role invite stores `default_scopes` but auth path ignores them, password policy rejection paths
 
 ## 7. CLI device pairing
@@ -122,11 +122,11 @@ All new and altered tables live in `internal/store/schema.sql` (the canonical sc
 
 ## 10. Audit log
 
-- [ ] 10.1 Create `internal/audit` package with `Recorder` interface (`Record(ctx, Event)`) and a SQLite-backed implementation that inserts into `audit_events`
+- [x] 10.1 Create `internal/audit` package with `Recorder` interface (`Record(ctx, Event)`) and a SQLite-backed implementation that inserts into `audit_events`
 - [ ] 10.2 Wire the recorder through `server.Build` and call it from every endpoint listed in design.md's "Audit log" section
 - [ ] 10.3 `GET /api/audit?actor=<id>&since=<rfc3339>&until=<rfc3339>&limit=<n>` (admin only): paginated read of `audit_events` ordered by `at DESC`
 - [ ] 10.4 `/inspector/audit` (admin only): HTML view rendering the event stream with actor email resolution and a simple time-range filter
-- [ ] 10.5 Append-only invariant: no DELETE or UPDATE statement against `audit_events` in production code paths; the prune loop does not touch this table
+- [x] 10.5 Append-only invariant: no DELETE or UPDATE statement against `audit_events` in production code paths; the prune loop does not touch this table
 - [ ] 10.6 Tests: every audited action produces exactly one event row with the expected `action`, `target_type`, `target_id`, and metadata; non-admin callers of `/api/audit` and `/inspector/audit` get 403
 
 ## 11. Inspector UI changes
@@ -157,11 +157,11 @@ All new and altered tables live in `internal/store/schema.sql` (the canonical sc
 
 ## 13. `hooks init` bootstrap-URL output
 
-- [ ] 13.1 In the init flow, after schema migrations, count rows in `users`. If zero, call `InviteStore.EnsureBootstrap()` and capture the code (the call inserts a fresh 24h-TTL row, or replaces an existing expired bootstrap row atomically)
-- [ ] 13.2 If a bootstrap code exists, print one line `signup: <server-url>/signup?code=<code>` after the existing token/curl output, with a note about the 24h TTL and single-use semantics
-- [ ] 13.3 If `users` is non-empty (e.g. re-running `hooks init --force` against a populated DB), do not call `EnsureBootstrap` and do not print the signup line
-- [ ] 13.4 Add a `--server-url` flag (or read `HOOKS_PUBLIC_URL` env var) so the printed signup URL points at the public hostname rather than `localhost`; fall back to a placeholder with a note if neither is set
-- [ ] 13.5 Test: fresh DB → init prints signup line with valid code → second init (no users yet) within 24h prints the same code (idempotent) → second init after expiry prints a *new* code; existing DB with users → init does not insert another bootstrap row
+- [x] 13.1 In the init flow, after schema migrations, count rows in `users`. If zero, call `InviteStore.EnsureBootstrap()` and capture the code (the call inserts a fresh 24h-TTL row, or replaces an existing expired bootstrap row atomically)
+- [x] 13.2 If a bootstrap code exists, print one line `signup: <server-url>/signup?code=<code>` after the existing token/curl output, with a note about the 24h TTL and single-use semantics
+- [x] 13.3 If `users` is non-empty (e.g. re-running `hooks init --force` against a populated DB), do not call `EnsureBootstrap` and do not print the signup line
+- [x] 13.4 Add a `--server-url` flag (or read `HOOKS_PUBLIC_URL` env var) so the printed signup URL points at the public hostname rather than `localhost`; fall back to a placeholder with a note if neither is set
+- [x] 13.5 Test: fresh DB → init prints signup line with valid code → second init (no users yet) within 24h prints the same code (idempotent) → second init after expiry prints a *new* code; existing DB with users → init does not insert another bootstrap row
 
 ## 14. Documentation
 
