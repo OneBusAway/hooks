@@ -178,6 +178,7 @@ func Build(cfg *config.Config, registry *sources.Registry, logger *slog.Logger) 
 		return nil, err
 	}
 	insp.Sessions = authMgr
+	insp.Audit = auditRec
 	insp.Register(mux)
 
 	// Server-rendered /login and /signup pages (the JSON /api/auth/login

@@ -23,12 +23,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebusaway/hooks/internal/audit"
 	"github.com/onebusaway/hooks/internal/auth"
 	"github.com/onebusaway/hooks/internal/pubsub"
 	"github.com/onebusaway/hooks/internal/push"
 	"github.com/onebusaway/hooks/internal/secret"
 	"github.com/onebusaway/hooks/internal/store"
 	"github.com/onebusaway/hooks/internal/tokens"
+	"github.com/onebusaway/hooks/internal/web"
 )
 
 //go:embed templates/*.tmpl.html
@@ -52,7 +54,13 @@ type Inspector struct {
 	// handler so requireAdmin can read (*User, *Session) from context. A
 	// nil Sessions falls back to the legacy hooks_inspector_token bearer
 	// cookie path only.
-	Sessions  *auth.Manager
+	Sessions *auth.Manager
+	// Audit, when set, receives a token.create / token.revoke entry every
+	// time /inspector/me/tokens (task 11.4) issues or revokes a PAT. The
+	// session-attached User on each request comes from auth.Manager's
+	// per-request lookup, so a separate UserStore reference would be a
+	// stale read; omit it here.
+	Audit     audit.Recorder
 	Logger    *slog.Logger
 	Sources   []string
 	tpls      *template.Template
@@ -101,6 +109,14 @@ func (in *Inspector) Register(mux *http.ServeMux) {
 		}
 		return in.Sessions.Middleware(h)
 	}
+	// wrapH is the same as wrap but accepts an already-composed Handler
+	// (e.g. one already wrapped in CSRF middleware).
+	wrapH := func(h http.Handler) http.Handler {
+		if in.Sessions == nil {
+			return h
+		}
+		return in.Sessions.Middleware(h)
+	}
 
 	mux.Handle("GET /inspector/static/", http.StripPrefix("/inspector/static/", http.FileServer(http.FS(in.staticSub))))
 	mux.Handle("GET /inspector/login", wrap(in.loginGET))
@@ -119,6 +135,18 @@ func (in *Inspector) Register(mux *http.ServeMux) {
 	mux.Handle("POST /inspector/push/{id}/test", wrap(in.pushTest))
 	mux.Handle("POST /inspector/push/{id}/rotate", wrap(in.pushRotate))
 	mux.Handle("POST /inspector/push/{id}/delete", wrap(in.pushDelete))
+
+	// /inspector/me is the user self-service page (task 11.4). It is
+	// session-only (the legacy raw-bearer cookie path is admin-scoped and
+	// does not surface a "current user"). Mutations run through the
+	// shared CSRF middleware so the inspector and /api/me/* enforce the
+	// same double-submit + Origin contract.
+	csrf := func(h http.Handler) http.Handler {
+		return web.Middleware(web.CSRFConfig{}, h)
+	}
+	mux.Handle("GET /inspector/me", wrap(in.meIndex))
+	mux.Handle("POST /inspector/me/tokens", wrapH(csrf(http.HandlerFunc(in.meCreateToken))))
+	mux.Handle("POST /inspector/me/tokens/{id}/revoke", wrapH(csrf(http.HandlerFunc(in.meRevokeToken))))
 }
 
 // requireAdmin enforces admin access for an inspector request.

@@ -1,0 +1,89 @@
+{{define "me"}}{{template "header" .}}
+<h1>My account</h1>
+
+<dl class="meta">
+  <dt>Email</dt><dd>{{.User.Email}}</dd>
+  <dt>Name</dt><dd>{{.User.Name}}</dd>
+  <dt>Role</dt><dd>{{.User.Role}}</dd>
+  <dt>Default scopes</dt><dd>{{range .User.DefaultScopes}}<span class="tag">{{.}}</span> {{else}}<em>none</em>{{end}}</dd>
+  <dt>Created</dt><dd>{{.User.CreatedAt.Format "2006-01-02 15:04"}}</dd>
+</dl>
+
+{{if .IsAdmin}}
+<p class="admin-links">
+  Admin: <a href="/inspector/users">manage users</a> · <a href="/inspector/audit">audit log</a>
+</p>
+{{end}}
+
+<h2>My tokens</h2>
+
+<form method="get" class="filters">
+  <label>Kind
+    <select name="kind">
+      <option value="" {{if eq .KindFilter ""}}selected{{end}}>all</option>
+      <option value="pat" {{if eq .KindFilter "pat"}}selected{{end}}>pat</option>
+      <option value="listener" {{if eq .KindFilter "listener"}}selected{{end}}>listener</option>
+    </select>
+  </label>
+  <button type="submit">Filter</button>
+</form>
+
+{{if .Plaintext}}
+<div class="banner">New PAT (shown once):
+  <code>{{.Plaintext}}</code>
+</div>
+{{end}}
+
+<form method="post" action="/inspector/me/tokens" class="form-row">
+  <label>Name <input type="text" name="name" required></label>
+  <label>Scopes <input type="text" name="scopes" placeholder="render"></label>
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <button type="submit">Mint ephemeral PAT</button>
+</form>
+<p class="muted">Ephemeral PATs are auto-revoked after 24h of inactivity.</p>
+
+<table>
+  <thead><tr><th>ID</th><th>Name</th><th>Kind</th><th>Scopes</th><th>Created</th><th>Last used</th><th>Expires</th><th></th></tr></thead>
+  <tbody>
+  {{range .Tokens}}
+  <tr>
+    <td><code>{{.ID}}</code></td>
+    <td>{{.Name}}{{if .Ephemeral}} <span class="tag">ephemeral</span>{{end}}</td>
+    <td>{{.Kind}}</td>
+    <td>{{range .Scopes}}<span class="tag">{{.}}</span> {{end}}</td>
+    <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+    <td>{{if .LastUsedAt}}{{.LastUsedAt.Format "2006-01-02 15:04"}}{{else}}–{{end}}</td>
+    <td>{{if .ExpiresAt}}{{.ExpiresAt.Format "2006-01-02"}}{{else}}–{{end}}</td>
+    <td>
+      <form method="post" action="/inspector/me/tokens/{{.ID}}/revoke">
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <button type="submit" class="danger">Revoke</button>
+      </form>
+    </td>
+  </tr>
+  {{else}}
+  <tr><td colspan="8" class="empty">You have no active tokens.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+
+<h2>My push subscriptions</h2>
+<table>
+  <thead><tr><th>ID</th><th>Source</th><th>Target</th><th>Cursor</th><th>Failures</th><th>Last error</th><th>Status</th></tr></thead>
+  <tbody>
+  {{range .Subs}}
+  <tr>
+    <td><code>{{.ID}}</code></td>
+    <td>{{.Source}}</td>
+    <td><code>{{.TargetURL}}</code></td>
+    <td>{{.Cursor}}</td>
+    <td>{{.ConsecutiveFailures}}</td>
+    <td><span class="trunc">{{.LastError}}</span></td>
+    <td>{{if .PausedAt}}paused{{else}}active{{end}}</td>
+  </tr>
+  {{else}}
+  <tr><td colspan="7" class="empty">You have no push subscriptions.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+{{template "footer" .}}{{end}}
