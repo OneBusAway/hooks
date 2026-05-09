@@ -518,3 +518,62 @@ func TestInspector_PushPageShowsOwnerColumnAndFilter(t *testing.T) {
 		t.Fatalf("user filter unexpectedly showed system sub; body=%s", bs3)
 	}
 }
+
+// TestInspector_AllSessionMutationsRequireCSRF (task 11.13 closing
+// coverage): every CSRF-protected /inspector mutation endpoint returns
+// 403 when posted without a `csrf_token` form field, even with a valid
+// session cookie + Origin header. Previously each endpoint had its own
+// per-feature `RequiresCSRF` test (mint PAT, push pause, users invite);
+// this is the parametric sweep that closes the "every form POST without
+// CSRF token returns 403" requirement at one stroke and prevents new
+// endpoints from being added without the same guard.
+func TestInspector_AllSessionMutationsRequireCSRF(t *testing.T) {
+	f := loadInspectorUsersFixture(t)
+	admin := f.makeUser(t, "admin@example.com", store.RoleAdmin)
+	other := f.makeUser(t, "other@example.com", store.RoleUser)
+	// Insert a user-owned PAT and push subscription so the
+	// /inspector/me/{tokens,push}/{id}/* routes resolve a real id rather
+	// than 404'ing before they ever reach the CSRF check.
+	tok := insertOwnedToken(t, f, admin, "csrf-target", store.TokenKindPAT, []string{"render"})
+	sub := insertOwnedSub(t, f, admin, "render")
+	f.loginAs(t, admin)
+	// Prime the csrf cookie. The endpoints must reject because the form
+	// body omits csrf_token, NOT because the cookie is missing.
+	f.primeCSRF(t, "real-csrf")
+
+	cases := []struct {
+		name string
+		path string
+	}{
+		{"meCreateToken", "/inspector/me/tokens"},
+		{"meRevokeToken", "/inspector/me/tokens/" + tok.ID + "/revoke"},
+		{"mePushPause", "/inspector/me/push/" + sub.ID + "/pause"},
+		{"mePushResume", "/inspector/me/push/" + sub.ID + "/resume"},
+		{"mePushTest", "/inspector/me/push/" + sub.ID + "/test"},
+		{"mePushRotate", "/inspector/me/push/" + sub.ID + "/rotate"},
+		{"mePushDelete", "/inspector/me/push/" + sub.ID + "/delete"},
+		{"usersInvite", "/inspector/users/invite"},
+		{"usersDeactivate", "/inspector/users/" + other.ID + "/deactivate"},
+		{"usersReactivate", "/inspector/users/" + other.ID + "/reactivate"},
+		{"usersResetPassword", "/inspector/users/" + other.ID + "/reset-password"},
+		{"usersUpdate", "/inspector/users/" + other.ID + "/update"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			form := url.Values{} // intentionally no csrf_token
+			req, _ := http.NewRequest(http.MethodPost, f.srv.URL+tc.path,
+				strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.Header.Set("Origin", f.srv.URL)
+			resp, err := f.client.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusForbidden {
+				t.Fatalf("%s: status %d, want 403", tc.path, resp.StatusCode)
+			}
+		})
+	}
+}

@@ -143,7 +143,7 @@ All new and altered tables live in `internal/store/schema.sql` (the canonical sc
 - [x] 11.10 Update `/inspector` redirect logic: anonymous → `/login?next=/inspector`; non-admin user → `/inspector/me`
 - [x] 11.11 Preserve legacy raw-bearer cookie path for `/inspector` with **full mutation access** for v1 (deprecation in v2); never set this cookie format on new logins
 - [x] 11.12 Add session-cookie middleware that complements the existing token-bearer middleware on the inspector router
-- [ ] 11.13 Tests: anonymous redirect, non-admin redirect, admin session grants access, legacy cookie path still authorizes mutations, deactivate confirmation modal blocks bad input, last-admin deactivation refused, all `/inspector/me/*` views are scoped to caller, every form POST without CSRF token returns 403
+- [x] 11.13 Tests: anonymous redirect, non-admin redirect, admin session grants access, legacy cookie path still authorizes mutations, deactivate confirmation modal blocks bad input, last-admin deactivation refused, all `/inspector/me/*` views are scoped to caller, every form POST without CSRF token returns 403
 
 ## 12. `hooksctl forward` ephemeral-token integration
 
