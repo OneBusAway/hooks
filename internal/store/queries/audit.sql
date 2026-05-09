@@ -10,4 +10,4 @@ SELECT id, at, actor_user_id, actor_token_id, action, target_type, target_id, me
    AND (sqlc.arg(filter_since) = 0 OR at >= sqlc.arg(since))
    AND (sqlc.arg(filter_until) = 0 OR at <= sqlc.arg(until))
  ORDER BY at DESC
- LIMIT ?;
+ LIMIT sqlc.arg(lim);

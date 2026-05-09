@@ -66,7 +66,7 @@ func (s *SQLite) ListAuditEvents(ctx context.Context, q AuditQuery) ([]AuditEven
 		FilterActor: int64(0),
 		FilterSince: int64(0),
 		FilterUntil: int64(0),
-		Limit:       limit,
+		Lim:         limit,
 	}
 	if q.ActorUserID != nil {
 		params.FilterActor = int64(1)

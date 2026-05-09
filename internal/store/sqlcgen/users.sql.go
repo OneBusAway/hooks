@@ -33,6 +33,17 @@ func (q *Queries) CountActiveAdminsExcluding(ctx context.Context, id string) (in
 	return n, err
 }
 
+const countUsers = `-- name: CountUsers :one
+SELECT COUNT(*) AS n FROM users
+`
+
+func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countUsers)
+	var n int64
+	err := row.Scan(&n)
+	return n, err
+}
+
 const deactivateUser = `-- name: DeactivateUser :execrows
 UPDATE users SET deactivated_at = ? WHERE id = ? AND deactivated_at IS NULL
 `

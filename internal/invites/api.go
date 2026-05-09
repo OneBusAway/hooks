@@ -52,10 +52,10 @@ func NewAPI(inv store.InviteStore, u store.UserStore, rec audit.Recorder, auth A
 // Register mounts the routes onto mux. CSRF and rate-limit middlewares
 // are layered on by the caller (server.Build).
 func (a *API) Register(mux *http.ServeMux) {
-	mux.HandleFunc("POST /api/invites", a.create)
-	mux.HandleFunc("GET /api/invites", a.list)
-	mux.HandleFunc("DELETE /api/invites/{code}", a.delete)
-	mux.HandleFunc("POST /api/auth/signup", a.signup)
+	mux.HandleFunc("POST /api/invites", a.Create)
+	mux.HandleFunc("GET /api/invites", a.List)
+	mux.HandleFunc("DELETE /api/invites/{code}", a.Delete)
+	mux.HandleFunc("POST /api/auth/signup", a.Signup)
 }
 
 type createRequest struct {
@@ -75,7 +75,7 @@ type inviteResponse struct {
 	ConsumedByUserID *string    `json:"consumed_by_user_id,omitempty"`
 }
 
-func (a *API) create(w http.ResponseWriter, r *http.Request) {
+func (a *API) Create(w http.ResponseWriter, r *http.Request) {
 	caller, ok := a.requireAdmin(w, r)
 	if !ok {
 		return
@@ -122,7 +122,7 @@ func (a *API) create(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, toInviteResponse(inv))
 }
 
-func (a *API) list(w http.ResponseWriter, r *http.Request) {
+func (a *API) List(w http.ResponseWriter, r *http.Request) {
 	if _, ok := a.requireAdmin(w, r); !ok {
 		return
 	}
@@ -148,7 +148,7 @@ func (a *API) list(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"invites": out})
 }
 
-func (a *API) delete(w http.ResponseWriter, r *http.Request) {
+func (a *API) Delete(w http.ResponseWriter, r *http.Request) {
 	caller, ok := a.requireAdmin(w, r)
 	if !ok {
 		return
@@ -190,7 +190,7 @@ type signupResponse struct {
 	Role   string `json:"role"`
 }
 
-func (a *API) signup(w http.ResponseWriter, r *http.Request) {
+func (a *API) Signup(w http.ResponseWriter, r *http.Request) {
 	var req signupRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad request"})

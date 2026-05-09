@@ -33,6 +33,18 @@ func (a tokenStoreAdapter) List(ctx context.Context, includeRevoked bool) ([]Tok
 func (a tokenStoreAdapter) Revoke(ctx context.Context, id string, when time.Time) error {
 	return a.s.Revoke(ctx, id, when)
 }
+func (a tokenStoreAdapter) ListByOwner(ctx context.Context, ownerUserID string, includeRevoked bool) ([]Token, error) {
+	return a.s.ListTokensByOwner(ctx, ownerUserID, includeRevoked)
+}
+func (a tokenStoreAdapter) ListSystem(ctx context.Context, includeRevoked bool) ([]Token, error) {
+	return a.s.ListSystemTokens(ctx, includeRevoked)
+}
+func (a tokenStoreAdapter) Get(ctx context.Context, id string) (Token, error) {
+	return a.s.GetToken(ctx, id)
+}
+func (a tokenStoreAdapter) UpdateOwner(ctx context.Context, id string, ownerUserID *string) error {
+	return a.s.UpdateTokenOwner(ctx, id, ownerUserID)
+}
 
 type pushStoreAdapter struct{ s *SQLite }
 
@@ -65,6 +77,15 @@ func (a pushStoreAdapter) RotateSecret(ctx context.Context, id, newHash string) 
 }
 func (a pushStoreAdapter) Delete(ctx context.Context, id string) error {
 	return a.s.DeletePush(ctx, id)
+}
+func (a pushStoreAdapter) ListByOwner(ctx context.Context, ownerUserID string, includePaused bool) ([]PushSubscription, error) {
+	return a.s.ListPushByOwner(ctx, ownerUserID, includePaused)
+}
+func (a pushStoreAdapter) ListSystem(ctx context.Context, includePaused bool) ([]PushSubscription, error) {
+	return a.s.ListSystemPush(ctx, includePaused)
+}
+func (a pushStoreAdapter) UpdateOwner(ctx context.Context, id string, ownerUserID *string) error {
+	return a.s.UpdatePushOwner(ctx, id, ownerUserID)
 }
 
 // Users returns a UserStore view of s.

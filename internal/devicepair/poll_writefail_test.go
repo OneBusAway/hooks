@@ -72,7 +72,7 @@ func TestPoll_ResponseWriteFails_DoesNotMarkFetched(t *testing.T) {
 	body, _ := json.Marshal(pollRequest{DeviceCode: "dc-writefail"})
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/device/poll", bytes.NewReader(body))
 	fw := &writeFailingWriter{}
-	api.poll(fw, req)
+	api.Poll(fw, req)
 
 	// Give any (incorrectly-spawned) goroutine ample time to run.
 	time.Sleep(100 * time.Millisecond)

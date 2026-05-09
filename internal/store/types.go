@@ -153,7 +153,11 @@ type TokenStore interface {
 	LookupByPlaintext(ctx context.Context, plaintext string) (Token, error)
 	TouchLastUsed(ctx context.Context, id string, when time.Time) error
 	List(ctx context.Context, includeRevoked bool) ([]Token, error)
+	ListByOwner(ctx context.Context, ownerUserID string, includeRevoked bool) ([]Token, error)
+	ListSystem(ctx context.Context, includeRevoked bool) ([]Token, error)
+	Get(ctx context.Context, id string) (Token, error)
 	Revoke(ctx context.Context, id string, when time.Time) error
+	UpdateOwner(ctx context.Context, id string, ownerUserID *string) error
 }
 
 // PushSubscription is the durable record of a push subscription.
@@ -198,6 +202,14 @@ type PushSubscriptionStore interface {
 	Resume(ctx context.Context, id string) error
 	RotateSecret(ctx context.Context, id, newHash string) error
 	Delete(ctx context.Context, id string) error
+
+	// ListByOwner returns subscriptions owned by ownerUserID. Use ListSystem
+	// for owner-NULL rows.
+	ListByOwner(ctx context.Context, ownerUserID string, includePaused bool) ([]PushSubscription, error)
+	// ListSystem returns subscriptions with owner_user_id IS NULL.
+	ListSystem(ctx context.Context, includePaused bool) ([]PushSubscription, error)
+	// UpdateOwner reassigns the owner; nil sets owner_user_id to NULL.
+	UpdateOwner(ctx context.Context, id string, ownerUserID *string) error
 }
 
 // Role is a user's role in the system.

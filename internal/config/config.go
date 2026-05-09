@@ -49,6 +49,20 @@ type Source struct {
 	BodySizeLimit int64 `yaml:"body_size_limit"`
 }
 
+// Web carries the optional web/auth knobs introduced by the developer-
+// accounts work. All fields default to safe values when omitted.
+type Web struct {
+	// SessionTTL is the sliding-expiry window for hooks_session cookies.
+	// Defaults to 30 days when zero.
+	SessionTTL time.Duration
+	// TrustProxyHeaders, when true, lets the cookie's Secure flag honor
+	// X-Forwarded-Proto from a trusted reverse proxy.
+	TrustProxyHeaders bool
+	// PublicURL is the externally reachable base URL (used for the
+	// device-pairing verification page and cmd/hooks signup output).
+	PublicURL string
+}
+
 // Config is the parsed, validated runtime configuration.
 type Config struct {
 	ListenAddr    string
@@ -57,6 +71,10 @@ type Config struct {
 	BodySizeLimit int64
 	DedupeWindow  time.Duration
 	SkewWindow    time.Duration
+
+	// Web carries optional knobs for the cookie-session and device-pairing
+	// flows. Zero values map to safe defaults.
+	Web Web
 
 	// Sources is keyed by source name (the URL path segment).
 	Sources map[string]Source
@@ -70,8 +88,15 @@ type rawConfig struct {
 	BodySizeLimit string                  `yaml:"body_size_limit"`
 	DedupeWindow  string                  `yaml:"dedupe_window"`
 	SkewWindow    string                  `yaml:"skew_window"`
+	Web           rawWeb                  `yaml:"web"`
 	Sources       map[string]rawSource    `yaml:"sources"`
 	Tokens        any                     `yaml:"tokens"` // forbidden; presence => error
+}
+
+type rawWeb struct {
+	SessionTTL        string `yaml:"session_ttl"`
+	TrustProxyHeaders bool   `yaml:"trust_proxy_headers"`
+	PublicURL         string `yaml:"public_url"`
 }
 
 type rawSource struct {
@@ -150,6 +175,16 @@ func Parse(data []byte, registry VerifierRegistry) (*Config, error) {
 		cfg.SkewWindow = d
 	}
 
+	if raw.Web.SessionTTL != "" {
+		d, err := time.ParseDuration(raw.Web.SessionTTL)
+		if err != nil {
+			return nil, fmt.Errorf("web.session_ttl: %w", err)
+		}
+		cfg.Web.SessionTTL = d
+	}
+	cfg.Web.TrustProxyHeaders = raw.Web.TrustProxyHeaders
+	cfg.Web.PublicURL = raw.Web.PublicURL
+
 	for name, rs := range raw.Sources {
 		s, err := buildSource(name, rs, cfg)
 		if err != nil {
@@ -226,6 +261,9 @@ func (c *Config) applyEnvOverrides() {
 	}
 	if v := os.Getenv("HOOKS_LOG_LEVEL"); v != "" {
 		c.LogLevel = v
+	}
+	if v := os.Getenv("HOOKS_PUBLIC_URL"); v != "" {
+		c.Web.PublicURL = v
 	}
 }
 

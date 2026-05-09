@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebusaway/hooks/internal/audit"
 	"github.com/onebusaway/hooks/internal/secret"
 	"github.com/onebusaway/hooks/internal/store"
 	"github.com/onebusaway/hooks/internal/tokens"
@@ -26,6 +28,11 @@ type API struct {
 	Now            func() time.Time
 	HashSecret     func(plaintext string) (string, error)
 	ConfiguredSrcs map[string]bool
+
+	// Logger receives WarnContext entries on internal-error sites. nil-safe.
+	Logger *slog.Logger
+	// Audit records ownership-transfer events. nil-safe.
+	Audit audit.Recorder
 }
 
 // NewAPI constructs an API. configuredSources is the set of source names from
@@ -50,6 +57,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/push-subscriptions", a.create)
 	mux.HandleFunc("GET /api/push-subscriptions", a.list)
 	mux.HandleFunc("GET /api/push-subscriptions/{id}", a.get)
+	mux.HandleFunc("PATCH /api/push-subscriptions/{id}", a.patch)
 	mux.HandleFunc("DELETE /api/push-subscriptions/{id}", a.delete)
 	mux.HandleFunc("POST /api/push-subscriptions/{id}/pause", a.pause)
 	mux.HandleFunc("POST /api/push-subscriptions/{id}/resume", a.resume)
@@ -58,7 +66,7 @@ func (a *API) Register(mux *http.ServeMux) {
 }
 
 func (a *API) create(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
+	if _, ok := a.requireAdmin(w, r); !ok {
 		return
 	}
 
@@ -104,12 +112,14 @@ func (a *API) create(w http.ResponseWriter, r *http.Request) {
 
 	plaintext, err := secret.NewRandom()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		a.warn(r.Context(), "push: random failed", slog.Any("err", err))
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	hash, err := a.HashSecret(plaintext)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		a.warn(r.Context(), "push: hash failed", slog.Any("err", err))
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
@@ -123,7 +133,8 @@ func (a *API) create(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:         a.Now().UTC(),
 	}
 	if err := a.Subs.Insert(r.Context(), sub); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		a.warn(r.Context(), "push: insert failed", slog.Any("err", err))
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	a.Manager.Add(sub, plaintext)
@@ -140,13 +151,25 @@ func (a *API) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) list(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
+	if _, ok := a.requireAdmin(w, r); !ok {
 		return
 	}
 	includePaused := r.URL.Query().Get("include_paused") == "1"
-	subs, err := a.Subs.List(r.Context(), includePaused)
+	owner := r.URL.Query().Get("owner")
+
+	var subs []store.PushSubscription
+	var err error
+	switch owner {
+	case "":
+		subs, err = a.Subs.List(r.Context(), includePaused)
+	case "system":
+		subs, err = a.Subs.ListSystem(r.Context(), includePaused)
+	default:
+		subs, err = a.Subs.ListByOwner(r.Context(), owner, includePaused)
+	}
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		a.warn(r.Context(), "push: list failed", slog.Any("err", err))
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	latest := store.NewLatestByCursor(a.Manager.Events)
@@ -157,14 +180,75 @@ func (a *API) list(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"subscriptions": out})
 }
 
+// patchReq distinguishes "field omitted" from "field present with null/
+// empty" by parsing through json.RawMessage. Without that, *string can't
+// tell apart `{}` (no-op) from `{"owner_user_id": null}` (clear owner).
+type patchReq struct {
+	OwnerUserID json.RawMessage `json:"owner_user_id"`
+}
+
+func resolveOwner(raw json.RawMessage) (newOwner *string, present bool, err error) {
+	if len(raw) == 0 {
+		return nil, false, nil
+	}
+	if string(raw) == "null" {
+		return nil, true, nil
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return nil, false, err
+	}
+	if s == "" || s == "system" {
+		return nil, true, nil
+	}
+	return &s, true, nil
+}
+
+func (a *API) patch(w http.ResponseWriter, r *http.Request) {
+	caller, ok := a.requireAdmin(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "id required", http.StatusBadRequest)
+		return
+	}
+	var req patchReq
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
+		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	newOwner, present, err := resolveOwner(req.OwnerUserID)
+	if err != nil {
+		http.Error(w, "owner_user_id: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !present {
+		http.Error(w, "no fields to update", http.StatusBadRequest)
+		return
+	}
+	if err := a.Subs.UpdateOwner(r.Context(), id, newOwner); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		a.warn(r.Context(), "push: update owner failed", slog.Any("err", err), slog.String("id", id))
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	a.recordTransfer(r.Context(), caller, id, newOwner)
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (a *API) get(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
+	if _, ok := a.requireAdmin(w, r); !ok {
 		return
 	}
 	id := r.PathValue("id")
 	sub, err := a.Subs.Get(r.Context(), id)
 	if err != nil {
-		writeNotFoundOr500(w, err)
+		a.notFoundOr500(r.Context(), w, err, "push: get failed")
 		return
 	}
 	latest, _ := a.Manager.Events.LatestSequence(r.Context(), sub.Source)
@@ -172,12 +256,12 @@ func (a *API) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) delete(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
+	if _, ok := a.requireAdmin(w, r); !ok {
 		return
 	}
 	id := r.PathValue("id")
 	if err := a.Subs.Delete(r.Context(), id); err != nil {
-		writeNotFoundOr500(w, err)
+		a.notFoundOr500(r.Context(), w, err, "push: delete failed")
 		return
 	}
 	a.Manager.Remove(id)
@@ -185,12 +269,12 @@ func (a *API) delete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) pause(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
+	if _, ok := a.requireAdmin(w, r); !ok {
 		return
 	}
 	id := r.PathValue("id")
 	if err := a.Subs.Pause(r.Context(), id, a.Now().UTC()); err != nil {
-		writeNotFoundOr500(w, err)
+		a.notFoundOr500(r.Context(), w, err, "push: pause failed")
 		return
 	}
 	a.Manager.Pause(id)
@@ -198,38 +282,41 @@ func (a *API) pause(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) resume(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
+	if _, ok := a.requireAdmin(w, r); !ok {
 		return
 	}
 	id := r.PathValue("id")
 	if err := a.Subs.Resume(r.Context(), id); err != nil {
-		writeNotFoundOr500(w, err)
+		a.notFoundOr500(r.Context(), w, err, "push: resume failed")
 		return
 	}
 	if err := a.Manager.Resume(r.Context(), id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		a.warn(r.Context(), "push: dispatcher resume failed", slog.Any("err", err), slog.String("id", id))
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *API) rotateSecret(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
+	if _, ok := a.requireAdmin(w, r); !ok {
 		return
 	}
 	id := r.PathValue("id")
 	plaintext, err := secret.NewRandom()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		a.warn(r.Context(), "push: rotate random failed", slog.Any("err", err))
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	hash, err := a.HashSecret(plaintext)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		a.warn(r.Context(), "push: rotate hash failed", slog.Any("err", err))
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	if err := a.Subs.RotateSecret(r.Context(), id, hash); err != nil {
-		writeNotFoundOr500(w, err)
+		a.notFoundOr500(r.Context(), w, err, "push: rotate failed")
 		return
 	}
 	a.Manager.Rotate(id, plaintext)
@@ -240,7 +327,7 @@ func (a *API) rotateSecret(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) test(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
+	if _, ok := a.requireAdmin(w, r); !ok {
 		return
 	}
 	id := r.PathValue("id")
@@ -251,12 +338,51 @@ func (a *API) test(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (a *API) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
-	if _, err := a.Auth.AuthorizeAdmin(r); err != nil {
+// requireAdmin returns the bearer token alongside the admin gate.
+func (a *API) requireAdmin(w http.ResponseWriter, r *http.Request) (store.Token, bool) {
+	tok, err := a.Auth.AuthorizeAdmin(r)
+	if err != nil {
 		tokens.WriteAuthError(w, err)
-		return false
+		return store.Token{}, false
 	}
-	return true
+	return tok, true
+}
+
+func (a *API) recordTransfer(ctx context.Context, caller store.Token, subID string, newOwner *string) {
+	if a.Audit == nil {
+		return
+	}
+	meta := map[string]any{}
+	if newOwner != nil {
+		meta["new_owner_user_id"] = *newOwner
+	} else {
+		meta["new_owner_user_id"] = nil
+	}
+	tokID := caller.ID
+	a.Audit.Record(ctx, store.AuditEvent{
+		ActorUserID:  caller.OwnerUserID,
+		ActorTokenID: &tokID,
+		Action:       audit.ActionSubscriptionTransferOwner,
+		TargetType:   "push_subscription",
+		TargetID:     subID,
+		Metadata:     meta,
+	})
+}
+
+func (a *API) warn(ctx context.Context, msg string, attrs ...slog.Attr) {
+	if a.Logger == nil {
+		return
+	}
+	a.Logger.LogAttrs(ctx, slog.LevelWarn, msg, attrs...)
+}
+
+func (a *API) notFoundOr500(ctx context.Context, w http.ResponseWriter, err error, msg string) {
+	if errors.Is(err, store.ErrNotFound) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	a.warn(ctx, msg, slog.Any("err", err))
+	http.Error(w, "internal error", http.StatusInternalServerError)
 }
 
 func (a *API) resolveSinceField(ctx context.Context, source, raw string) (int64, error) {
@@ -319,14 +445,6 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
-}
-
-func writeNotFoundOr500(w http.ResponseWriter, err error) {
-	if errors.Is(err, store.ErrNotFound) {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-	http.Error(w, err.Error(), http.StatusInternalServerError)
 }
 
 func readAll(r *http.Request) ([]byte, error) {

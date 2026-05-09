@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/onebusaway/hooks/internal/ratelimit"
 	"github.com/onebusaway/hooks/internal/secret"
 	"github.com/onebusaway/hooks/internal/store"
 )
@@ -22,8 +23,8 @@ func NewAPI(m *Manager) *API { return &API{Manager: m} }
 // Register mounts the auth routes onto mux. CSRF middleware is applied at
 // the server.Build level so the auth API does not have to know about it.
 func (a *API) Register(mux *http.ServeMux) {
-	mux.HandleFunc("POST /api/auth/login", a.login)
-	mux.HandleFunc("POST /api/auth/logout", a.logout)
+	mux.HandleFunc("POST /api/auth/login", a.Login)
+	mux.HandleFunc("POST /api/auth/logout", a.Logout)
 }
 
 type loginRequest struct {
@@ -39,7 +40,7 @@ type loginResponse struct {
 	CSRFToken string `json:"csrf_token"`
 }
 
-func (a *API) login(w http.ResponseWriter, r *http.Request) {
+func (a *API) Login(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad request"})
@@ -85,7 +86,7 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (a *API) logout(w http.ResponseWriter, r *http.Request) {
+func (a *API) Logout(w http.ResponseWriter, r *http.Request) {
 	c, err := r.Cookie(SessionCookie)
 	if err != nil || c.Value == "" {
 		// Idempotent: already logged out.
@@ -93,8 +94,16 @@ func (a *API) logout(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	id, _ := a.Manager.DeleteSession(r.Context(), c.Value)
+	// Distinguish ErrInvalid (idempotent — clear cookie + 204) from a real
+	// store error. Silently discarding the latter would leave the session
+	// row alive server-side; a replay of the cookie still authenticates.
+	id, delErr := a.Manager.DeleteSession(r.Context(), c.Value)
 	a.Manager.ClearCookies(w, r)
+	if delErr != nil && !errors.Is(delErr, ErrInvalid) {
+		a.warn(r.Context(), "auth: logout delete session failed", slog.Any("err", delErr))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
 	if id != "" {
 		// Audit, attributing to the session's owner if we can find them.
 		if user, _, ok := a.Manager.FromContext(r.Context()); ok {
@@ -131,20 +140,11 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-// clientIP returns the request's best-effort client IP by stripping the
-// :port suffix from RemoteAddr. It does NOT honor X-Forwarded-For or any
-// proxy headers — callers behind a trusted reverse proxy that need the
-// original client IP must not use this helper. (Centralized proxy-aware
-// IP extraction is a follow-up — see §17.4.)
+// clientIP returns the request's best-effort client IP via the shared
+// ratelimit.KeyByIP helper — net.SplitHostPort handles bracketed IPv6
+// correctly. It does NOT honor X-Forwarded-For or any proxy headers;
+// callers behind a trusted reverse proxy that need the original client IP
+// must use a header-aware helper (not yet implemented).
 func clientIP(r *http.Request) string {
-	if r == nil {
-		return ""
-	}
-	addr := r.RemoteAddr
-	for i := len(addr) - 1; i >= 0; i-- {
-		if addr[i] == ':' {
-			return addr[:i]
-		}
-	}
-	return addr
+	return ratelimit.KeyByIP(r)
 }

@@ -56,14 +56,14 @@ All new and altered tables live in `internal/store/schema.sql` (the canonical sc
 ## 4. CSRF and request-origin defenses
 
 - [x] 4.1 Implement `internal/web/csrf.go` middleware that, for any cookie-authenticated mutation: (a) requires `Origin` (or `Referer` fallback) to match the request host; (b) rejects `Origin: null`; (c) reads `hooks_csrf` cookie and the form/JSON `csrf_token` field and constant-time compares them. Bearer-only requests (no `hooks_session` cookie) are exempt.
-- [ ] 4.2 Apply CSRF middleware to: `/api/auth/login`, `/api/auth/logout`, `/api/auth/signup`, `/api/auth/device/approve`, `/api/auth/device/deny`, all `/api/me/*` mutations, all `/api/users/*` mutations, all `/api/invites/*` mutations, all admin `/api/tokens` mutations, all admin `/api/push-subscriptions` mutations
+- [x] 4.2 Apply CSRF middleware to: `/api/auth/login`, `/api/auth/logout`, `/api/auth/signup`, `/api/auth/device/approve`, `/api/auth/device/deny`, all `/api/me/*` mutations, all `/api/users/*` mutations, all `/api/invites/*` mutations, all admin `/api/tokens` mutations, all admin `/api/push-subscriptions` mutations (admin /api/tokens and /api/push-subscriptions mutations remain bearer-only in v1; CSRF middleware is a no-op for bearer-only requests)
 - [ ] 4.3 Server-rendered inspector forms: include a hidden `csrf_token` field whose value matches the `hooks_csrf` cookie; rotate the CSRF cookie value on session creation/login
 - [x] 4.4 Tests: missing `Origin` returns 403; mismatched `Origin` returns 403; `Origin: null` returns 403; missing CSRF cookie returns 403; mismatched CSRF token returns 403; valid Origin + matching CSRF token + cookie session passes; bearer-only PAT calls bypass CSRF entirely; legacy bearer-in-cookie path bypasses CSRF (since the cookie *is* the bearer in that path)
 
 ## 5. Rate limiting
 
 - [x] 5.1 Implement `internal/ratelimit` package with a token-bucket-per-key middleware (`KeyByIP`, `KeyByUser`); buckets live in process memory and are GC'd on idle
-- [ ] 5.2 Apply rate limits: `POST /api/auth/login` (5/min/IP, 30/hour/IP), `POST /api/auth/signup` (3/min/IP, 10/hour/IP), `POST /api/auth/device/start` (10/min/IP), `POST /api/auth/device/poll` (60/min/IP), `POST /api/auth/device/approve` (10/min/user)
+- [x] 5.2 Apply rate limits: `POST /api/auth/login` (5/min/IP, 30/hour/IP), `POST /api/auth/signup` (3/min/IP, 10/hour/IP), `POST /api/auth/device/start` (10/min/IP), `POST /api/auth/device/poll` (60/min/IP), `POST /api/auth/device/approve` (10/min/user)
 - [x] 5.3 On limit-exceeded responses: HTTP 429 with `Retry-After: <seconds>` header; record the rejection at debug log level (no plaintext in logs)
 - [x] 5.4 Tests: bucket refills, separate IPs do not collide, 429 includes `Retry-After`, per-user buckets correctly key on the authenticated user
 
@@ -75,7 +75,7 @@ All new and altered tables live in `internal/store/schema.sql` (the canonical sc
 - [x] 6.4 `POST /api/auth/signup` (unauthenticated) accepting `{code, email, name, password}`: validate invite freshness (404/410/409 for missing/expired/consumed), enforce password policy (`internal/users.ValidatePassword`), create user with role + default_scopes from the invite, mark invite consumed atomically (single transaction; rollback on user-insert failure). Record `audit_events` for `user.create` and `invite.consume`.
 - [x] 6.5 Bootstrap-invite ensure-on-init: in `cmd/hooks` init path (and on server boot), if `users` is empty, call `InviteStore.EnsureBootstrap()` which inserts a `bootstrap=true, role=admin, expires_at=now+24h` row with a fresh code if no bootstrap row already exists; if a bootstrap row exists but is expired, replace it atomically.
 - [x] 6.6 Bootstrap-invite consumption: on every successful signup, also mark any `bootstrap=true` invite as consumed; signup attempts using a consumed bootstrap code return 409; signup attempts using an expired bootstrap code return 410
-- [ ] 6.7 `cmd/hooks invite` subcommand (server-side): prints a signup URL for a freshly created (admin-scoped) invite by hitting the API with the local admin token loaded from disk
+- [x] 6.7 `cmd/hooks invite` subcommand (server-side): prints a signup URL for a freshly created (admin-scoped) invite by hitting the API with the local admin token loaded from disk
 - [x] 6.8 `hooksctl invite create [--role user|admin] [--scopes render,...] [--ttl 7d]`, `hooksctl invite list [--include-consumed]`, `hooksctl invite revoke <code>` — CLI subcommands that hit `/api/invites` using the admin's PAT
 - [ ] 6.9 Tests: invite creation idempotency, bootstrap auto-insert idempotent, bootstrap consumed exactly once, expired bootstrap replaced on next init, expired invite rejected with 410, race test (two concurrent signups with same invite — exactly one succeeds), admin-role invite stores `default_scopes` but auth path ignores them, password policy rejection paths
 
@@ -96,35 +96,35 @@ All new and altered tables live in `internal/store/schema.sql` (the canonical sc
 
 ## 8. Self-service /api/me endpoints
 
-- [ ] 8.1 `GET /api/me`: returns calling user's id, email, name, role, default_scopes, created_at; 401 if anonymous
-- [ ] 8.2 `PATCH /api/me {name?}`: updates own name (only field editable in v1); 400 on empty
-- [ ] 8.3 `GET /api/me/tokens [?include_revoked=1] [?kind=pat|listener]`: list own active and (when `include_revoked=1`) revoked tokens; 401 if anonymous
-- [ ] 8.4 `POST /api/me/tokens {name, scopes, kind?, ephemeral?, expires_at_seconds?}` (CSRF-checked when cookie-authenticated): validate scopes are a subset of caller's held scopes (admin holds all source scopes; user holds `default_scopes` plus implicit `account`). Reject empty `scopes` for `kind='pat'` with 400. For `kind='pat'` (default), force-include `account` in the stored scope set if absent; for `kind='listener'`, do NOT auto-inject `account`. Cap `expires_at_seconds` at 1 year (31536000); for `ephemeral=true` the cap is 24h-since-last-use enforced by the prune loop, not the column. Insert with `owner_user_id=caller`. Return plaintext exactly once.
-- [ ] 8.5 `POST /api/me/tokens/{id}/revoke` (CSRF-checked when cookie-authenticated): 404 if id not owned by caller; otherwise set `revoked_at`. The literal id `self` resolves to the bearer's own token id (used by `hooksctl logout`).
-- [ ] 8.6 `GET/POST/PATCH/DELETE /api/me/subscriptions[/{id}[/{action}]]` (mutations CSRF-checked): full parity with `/api/push-subscriptions` operationally, scoped to caller-owned rows; ignore any `owner_user_id` field in the request body
-- [ ] 8.7 Authentication enforcement: PATs (`kind='pat'`) authorize `/api/me/*` and the inspector but NOT `/subscribe/<source>`. Listener tokens (`kind='listener'`) authorize `/subscribe/<source>` and (when admin-scoped) the inspector but NOT `/api/me/*`. Mismatched-kind requests return 403.
+- [x] 8.1 `GET /api/me`: returns calling user's id, email, name, role, default_scopes, created_at; 401 if anonymous
+- [x] 8.2 `PATCH /api/me {name?}`: updates own name (only field editable in v1); 400 on empty
+- [x] 8.3 `GET /api/me/tokens [?include_revoked=1] [?kind=pat|listener]`: list own active and (when `include_revoked=1`) revoked tokens; 401 if anonymous
+- [x] 8.4 `POST /api/me/tokens {name, scopes, kind?, ephemeral?, expires_in_seconds?}` (CSRF-checked when cookie-authenticated): validate scopes are a subset of caller's held scopes (admin holds all source scopes; user holds `default_scopes` plus implicit `account`). Reject empty `scopes` for `kind='pat'` with 400. For `kind='pat'` (default), force-include `account` in the stored scope set if absent; for `kind='listener'`, do NOT auto-inject `account`. Cap `expires_in_seconds` at 1 year (31536000); for `ephemeral=true` the cap is 24h-since-last-use enforced by the prune loop, not the column. Insert with `owner_user_id=caller`. Return plaintext exactly once.
+- [x] 8.5 `POST /api/me/tokens/{id}/revoke` (CSRF-checked when cookie-authenticated): 404 if id not owned by caller; otherwise set `revoked_at`. The literal id `self` resolves to the bearer's own token id (used by `hooksctl logout`).
+- [x] 8.6 `GET/POST/PATCH/DELETE /api/me/subscriptions[/{id}[/{action}]]` (mutations CSRF-checked): full parity with `/api/push-subscriptions` operationally, scoped to caller-owned rows; ignore any `owner_user_id` field in the request body
+- [x] 8.7 Authentication enforcement: PATs (`kind='pat'`) authorize `/api/me/*` and the inspector but NOT `/subscribe/<source>`. Listener tokens (`kind='listener'`) authorize `/subscribe/<source>` and (when admin-scoped) the inspector but NOT `/api/me/*`. Mismatched-kind requests return 403.
 - [ ] 8.8 `hooksctl me token add --name <label> --scopes <list> [--kind pat|listener] [--ephemeral] [--expires-in 30d]`, `hooksctl me token list [--include-revoked]`, `hooksctl me token revoke <id>` — CLI subcommands hitting `/api/me/tokens`
 - [ ] 8.9 `hooksctl me sub {add,list,pause,resume,rotate-secret,rm,test}` — CLI parity with admin `hooksctl push` subcommands but scoped to the caller's subscriptions via `/api/me/subscriptions`
 - [ ] 8.10 Tests: scope-subset enforcement (request `["render","stripe"]` when user holds only `["render"]` → 403); admin-implicit-scopes test; cross-user 404 (user A cannot revoke user B's token); body-`owner_user_id`-ignored test; PAT cannot subscribe → 403; listener token cannot reach `/api/me` → 403; ephemeral expiry-by-inactivity covered by prune-loop tests; expired non-ephemeral PAT (past `expires_at`) returns 401
 
 ## 9. Admin /api/users and /api/invites surface
 
-- [ ] 9.1 `GET /api/users` (admin): list all users with id/email/name/role/default_scopes/created_at/deactivated_at; support `?role=user|admin` filter
-- [ ] 9.2 `GET /api/users/{id}` (admin): full record; 404 if not found
-- [ ] 9.3 `PATCH /api/users/{id} {name?, default_scopes?}` (admin, CSRF-checked): admin-only profile edit. Cannot edit `email`, `role`, or password via this endpoint. Record `audit_events` action `user.update`.
-- [ ] 9.4 `POST /api/users/{id}/deactivate {confirm: <email>}` (admin, CSRF-checked): atomic transaction — set `deactivated_at`, set `revoked_at` on every owned token (regardless of `kind` or `ephemeral`), set `paused_at` on every owned subscription. Reject with HTTP 409 if the target is the only active admin (last-admin guard). Reject with HTTP 400 on `confirm` mismatch. Record `audit_events`.
-- [ ] 9.5 `POST /api/users/{id}/reactivate` (admin, CSRF-checked): clear `deactivated_at` only; tokens and subscriptions remain revoked/paused. Record `audit_events`.
-- [ ] 9.6 `POST /api/users/{id}/reset-password {new_password}` (admin, CSRF-checked): enforce password policy, set new password hash, invalidate all sessions for that user; respond with HTTP 204. Record `audit_events`.
-- [ ] 9.7 `GET /api/tokens?owner=<user_id|system>` (admin) extended to support owner filter; `system` matches `owner_user_id IS NULL`. Add `kind` filter.
-- [ ] 9.8 `PATCH /api/tokens/{id} {owner_user_id?}` (admin, CSRF-checked): transfer ownership (or set NULL for system); record `audit_events` action `token.transfer_owner`
-- [ ] 9.9 Same `?owner=` filter and `PATCH` ownership transfer for `/api/push-subscriptions` (CSRF-checked); record `audit_events` action `subscription.transfer_owner`
+- [x] 9.1 `GET /api/users` (admin): list all users with id/email/name/role/default_scopes/created_at/deactivated_at; support `?role=user|admin` filter
+- [x] 9.2 `GET /api/users/{id}` (admin): full record; 404 if not found
+- [x] 9.3 `PATCH /api/users/{id} {name?, default_scopes?}` (admin, CSRF-checked): admin-only profile edit. Cannot edit `email`, `role`, or password via this endpoint. Record `audit_events` action `user.update`.
+- [x] 9.4 `POST /api/users/{id}/deactivate {confirm: <email>}` (admin, CSRF-checked): atomic transaction — set `deactivated_at`, set `revoked_at` on every owned token (regardless of `kind` or `ephemeral`), set `paused_at` on every owned subscription. Reject with HTTP 409 if the target is the only active admin (last-admin guard). Reject with HTTP 400 on `confirm` mismatch. Record `audit_events`.
+- [x] 9.5 `POST /api/users/{id}/reactivate` (admin, CSRF-checked): clear `deactivated_at` only; tokens and subscriptions remain revoked/paused. Record `audit_events`.
+- [x] 9.6 `POST /api/users/{id}/reset-password {new_password}` (admin, CSRF-checked): enforce password policy, set new password hash, invalidate all sessions for that user; respond with HTTP 204. Record `audit_events`.
+- [x] 9.7 `GET /api/tokens?owner=<user_id|system>` (admin) extended to support owner filter; `system` matches `owner_user_id IS NULL`. Add `kind` filter.
+- [x] 9.8 `PATCH /api/tokens/{id} {owner_user_id?}` (admin, CSRF-checked): transfer ownership (or set NULL for system); record `audit_events` action `token.transfer_owner`
+- [x] 9.9 Same `?owner=` filter and `PATCH` ownership transfer for `/api/push-subscriptions` (CSRF-checked); record `audit_events` action `subscription.transfer_owner`
 - [ ] 9.10 Tests: cascading revoke is atomic (failure mid-tx leaves nothing partially deactivated); confirm-email mismatch returns 400; last-admin deactivation returns 409; reactivation does not auto-restore tokens; ownership transfer is reflected in `/api/me` calls by the new owner; `PATCH /api/users/{id}` updates default_scopes; password reset rejects short passwords
 
 ## 10. Audit log
 
 - [x] 10.1 Create `internal/audit` package with `Recorder` interface (`Record(ctx, Event)`) and a SQLite-backed implementation that inserts into `audit_events`
-- [ ] 10.2 Wire the recorder through `server.Build` and call it from every endpoint listed in design.md's "Audit log" section
-- [ ] 10.3 `GET /api/audit?actor=<id>&since=<rfc3339>&until=<rfc3339>&limit=<n>` (admin only): paginated read of `audit_events` ordered by `at DESC`
+- [x] 10.2 Wire the recorder through `server.Build` and call it from every endpoint listed in design.md's "Audit log" section
+- [x] 10.3 `GET /api/audit?actor=<id>&since=<rfc3339>&until=<rfc3339>&limit=<n>` (admin only): paginated read of `audit_events` ordered by `at DESC`
 - [ ] 10.4 `/inspector/audit` (admin only): HTML view rendering the event stream with actor email resolution and a simple time-range filter
 - [x] 10.5 Append-only invariant: no DELETE or UPDATE statement against `audit_events` in production code paths; the prune loop does not touch this table
 - [ ] 10.6 Tests: every audited action produces exactly one event row with the expected `action`, `target_type`, `target_id`, and metadata; non-admin callers of `/api/audit` and `/inspector/audit` get 403
@@ -216,8 +216,8 @@ on their own.
 - [ ] 17.1 Unexport `auth.Manager.{Sessions, Users, Audit, Cookies}`; `Manager{}` with nil deps currently compiles and crashes on first use. Force `NewManager` as the only constructor.
 - [ ] 17.2 Type `AuditEvent.Action` and `AuditEvent.TargetType` as named string aliases so the `audit.Action*` constants form a closed set the type system understands.
 - [ ] 17.3 Introduce `type Scopes []string` with `Has`, `With`, `Equal` methods. Centralizes the implicit-`account`-scope injection that's currently duplicated between `userHeldScopes` (`devicepair/api.go:364`) and the (deferred) `/api/me/tokens` mint path.
-- [ ] 17.4 Consolidate client-IP extraction into `ratelimit.KeyByIP`-shape helper (uses `net.SplitHostPort` correctly and handles bracketed IPv6); replace the manual reverse-loop in `auth/handlers.go:128-140` and `devicepair/api.go:402-413`.
-- [ ] 17.5 Add a `CountUsers :one` query and use it in `cmd/hooks init` instead of materializing `ListUsers()` to test emptiness. Trivial today; matters once a deployment has thousands of users.
+- [x] 17.4 Consolidate client-IP extraction into `ratelimit.KeyByIP`-shape helper (uses `net.SplitHostPort` correctly and handles bracketed IPv6); replace the manual reverse-loop in `auth/handlers.go:128-140` and `devicepair/api.go:402-413`.
+- [x] 17.5 Add a `CountUsers :one` query and use it in `cmd/hooks init` instead of materializing `ListUsers()` to test emptiness. Trivial today; matters once a deployment has thousands of users.
 - [x] 17.6 Drop the dead `signupTxer` interface block in `internal/invites/api.go:243-254` (the `_ = tx` no-op assignment) — only the second declaration is live.
 - [ ] 17.7 `LookupByPlaintext` (`internal/store/sqlite.go`) silently skips rows whose hash fails to parse. Log a warn keyed by `r.ID` so a corrupted secret_hash column is observable instead of causing valid plaintexts to silently miss.
 - [ ] 17.8 Add a `(p *DevicePairing) ApprovedToken() (plaintext, tokenID string, ok bool)` accessor. Replaces the runtime cross-field check in `devicepair/api.go:195` with a single typed extraction point — encodes "Status==ApprovedUnfetched ⇒ PlaintextToken≠nil ∧ TokenID≠nil" at the type boundary.

@@ -44,11 +44,11 @@ func (q *Queries) InsertAuditEvent(ctx context.Context, arg InsertAuditEventPara
 const listAuditEvents = `-- name: ListAuditEvents :many
 SELECT id, at, actor_user_id, actor_token_id, action, target_type, target_id, metadata
   FROM audit_events
- WHERE (?2 = 0 OR actor_user_id = ?3)
-   AND (?4 = 0 OR at >= ?5)
-   AND (?6 = 0 OR at <= ?7)
+ WHERE (?1 = 0 OR actor_user_id = ?2)
+   AND (?3 = 0 OR at >= ?4)
+   AND (?5 = 0 OR at <= ?6)
  ORDER BY at DESC
- LIMIT ?
+ LIMIT ?7
 `
 
 type ListAuditEventsParams struct {
@@ -58,7 +58,7 @@ type ListAuditEventsParams struct {
 	Since       int64
 	FilterUntil interface{}
 	Until       int64
-	Limit       int64
+	Lim         int64
 }
 
 func (q *Queries) ListAuditEvents(ctx context.Context, arg ListAuditEventsParams) ([]AuditEvent, error) {
@@ -69,7 +69,7 @@ func (q *Queries) ListAuditEvents(ctx context.Context, arg ListAuditEventsParams
 		arg.Since,
 		arg.FilterUntil,
 		arg.Until,
-		arg.Limit,
+		arg.Lim,
 	)
 	if err != nil {
 		return nil, err

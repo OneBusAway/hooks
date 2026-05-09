@@ -6,10 +6,10 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/onebusaway/hooks/internal/audit"
+	"github.com/onebusaway/hooks/internal/ratelimit"
 	"github.com/onebusaway/hooks/internal/secret"
 	"github.com/onebusaway/hooks/internal/store"
 	"github.com/onebusaway/hooks/internal/tokens"
@@ -78,10 +78,10 @@ func NewAPI(s *store.SQLite, auth AuthProvider, recorder audit.Recorder, verific
 
 // Register mounts the routes onto mux.
 func (a *API) Register(mux *http.ServeMux) {
-	mux.HandleFunc("POST /api/auth/device/start", a.start)
-	mux.HandleFunc("POST /api/auth/device/poll", a.poll)
-	mux.HandleFunc("POST /api/auth/device/approve", a.approve)
-	mux.HandleFunc("POST /api/auth/device/deny", a.deny)
+	mux.HandleFunc("POST /api/auth/device/start", a.Start)
+	mux.HandleFunc("POST /api/auth/device/poll", a.Poll)
+	mux.HandleFunc("POST /api/auth/device/approve", a.Approve)
+	mux.HandleFunc("POST /api/auth/device/deny", a.Deny)
 }
 
 type startRequest struct {
@@ -97,7 +97,7 @@ type startResponse struct {
 	ExpiresIn       int    `json:"expires_in"`
 }
 
-func (a *API) start(w http.ResponseWriter, r *http.Request) {
+func (a *API) Start(w http.ResponseWriter, r *http.Request) {
 	var req startRequest
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
@@ -175,7 +175,7 @@ type pollResponse struct {
 	Scopes  []string `json:"scopes,omitempty"`
 }
 
-func (a *API) poll(w http.ResponseWriter, r *http.Request) {
+func (a *API) Poll(w http.ResponseWriter, r *http.Request) {
 	var req pollRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad request"})
@@ -286,7 +286,7 @@ type approveRequest struct {
 	GrantedScopes []string `json:"granted_scopes"`
 }
 
-func (a *API) approve(w http.ResponseWriter, r *http.Request) {
+func (a *API) Approve(w http.ResponseWriter, r *http.Request) {
 	caller, _, ok := a.Auth.FromContext(r.Context())
 	if !ok {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "login required"})
@@ -385,7 +385,7 @@ type denyRequest struct {
 	UserCode string `json:"user_code"`
 }
 
-func (a *API) deny(w http.ResponseWriter, r *http.Request) {
+func (a *API) Deny(w http.ResponseWriter, r *http.Request) {
 	caller, _, ok := a.Auth.FromContext(r.Context())
 	if !ok {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "login required"})
@@ -425,8 +425,12 @@ func (a *API) RunSweeper(ctx context.Context, interval time.Duration) {
 			return
 		case <-t.C:
 			now := a.Now().UTC()
-			_, _ = a.Pairings.ExpirePending(ctx, now)
-			_, _ = a.Pairings.DeleteOld(ctx, now.Add(-24*time.Hour))
+			if _, err := a.Pairings.ExpirePending(ctx, now); err != nil {
+				a.warn(ctx, "device-pairing sweeper: ExpirePending failed", slog.Any("err", err))
+			}
+			if _, err := a.Pairings.DeleteOld(ctx, now.Add(-24*time.Hour)); err != nil {
+				a.warn(ctx, "device-pairing sweeper: DeleteOld failed", slog.Any("err", err))
+			}
 		}
 	}
 }
@@ -472,18 +476,7 @@ func subset(need, have []string) bool {
 	return true
 }
 
-func clientIP(r *http.Request) string {
-	if r == nil {
-		return ""
-	}
-	addr := r.RemoteAddr
-	for i := len(addr) - 1; i >= 0; i-- {
-		if addr[i] == ':' {
-			return addr[:i]
-		}
-	}
-	return addr
-}
+func clientIP(r *http.Request) string { return ratelimit.KeyByIP(r) }
 
 func derefString(p *string) string {
 	if p == nil {
@@ -530,5 +523,3 @@ func devicePrefix(code string) string {
 	return code[:8]
 }
 
-// strings.TrimSpace is used by NormalizeUserCode in codes.go.
-var _ = strings.TrimSpace

@@ -12,6 +12,7 @@ type Querier interface {
 	CheckEventDuplicate(ctx context.Context, arg CheckEventDuplicateParams) (int64, error)
 	CountActiveAdmins(ctx context.Context) (int64, error)
 	CountActiveAdminsExcluding(ctx context.Context, id string) (int64, error)
+	CountUsers(ctx context.Context) (int64, error)
 	DeactivateUser(ctx context.Context, arg DeactivateUserParams) (int64, error)
 	DeleteBootstrapInvite(ctx context.Context) error
 	DeleteExpiredSessions(ctx context.Context, expiresAt int64) (int64, error)

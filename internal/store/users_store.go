@@ -172,6 +172,13 @@ func (s *SQLite) SetUserPasswordHash(ctx context.Context, id, hash string) error
 	return nil
 }
 
+// CountUsers returns the number of rows in the users table. Used by
+// `hooks init` to gate the bootstrap-invite emission without materializing
+// the full ListUsers result.
+func (s *SQLite) CountUsers(ctx context.Context) (int64, error) {
+	return s.q.CountUsers(ctx)
+}
+
 func (s *SQLite) CountActiveAdmins(ctx context.Context) (int64, error) {
 	return s.q.CountActiveAdmins(ctx)
 }

@@ -41,6 +41,9 @@ UPDATE users SET deactivated_at = NULL WHERE id = ?;
 -- name: SetUserPasswordHash :execrows
 UPDATE users SET password_hash = ? WHERE id = ?;
 
+-- name: CountUsers :one
+SELECT COUNT(*) AS n FROM users;
+
 -- name: CountActiveAdmins :one
 SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND deactivated_at IS NULL;
 

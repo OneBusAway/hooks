@@ -33,6 +33,8 @@ func main() {
 		switch os.Args[1] {
 		case "init":
 			os.Exit(runInit(os.Args[2:]))
+		case "invite":
+			os.Exit(runInvite(os.Args[2:]))
 		case "prune":
 			os.Exit(runPrune(os.Args[2:]))
 		case "verify":
@@ -52,6 +54,7 @@ Usage:
   hooks                       run the server (defaults from hooks.yaml)
   hooks --dev                 run in dev mode (verbose, opens browser, prints quickstart)
   hooks init                  scaffold hooks.yaml + database, mint admin token
+  hooks invite                mint a signup invite directly against the local DB and print the URL
   hooks prune --older-than 7d remove events older than the given duration
   hooks verify                recompute body sha256 for all stored events
 
@@ -208,14 +211,27 @@ sources:
 	// deployments where accounts already exist.
 	bootstrapCode := ""
 	bootstrapTTL := ""
-	if n, err := st.CountActiveAdmins(context.Background()); err == nil && n == 0 {
+	adminCount, adminErr := st.CountActiveAdmins(context.Background())
+	if adminErr != nil {
+		// Don't silently skip the bootstrap path on a transient DB read —
+		// surface so the operator can investigate.
+		fmt.Fprintf(os.Stderr, "init: count active admins: %v\n", adminErr)
+		return 1
+	}
+	if adminCount == 0 {
 		// Also check the wider users table to handle the
 		// "every admin has been deactivated" edge case (still treated
-		// as "no admins, re-bootstrap is fine").
-		userCount := 0
-		users, _ := st.ListUsers(context.Background())
-		userCount = len(users)
-		if userCount == 0 {
+		// as "no admins, re-bootstrap is fine"). Use CountUsers rather
+		// than materializing ListUsers — matters once a deployment has
+		// thousands of accounts. CRITICAL: do NOT swallow the error here;
+		// a transient failure that returned 0 would silently mint a fresh
+		// bootstrap admin invite on a populated database.
+		total, err := st.CountUsers(context.Background())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "init: count users: %v\n", err)
+			return 1
+		}
+		if total == 0 {
 			now := time.Now().UTC()
 			inv, err := st.EnsureBootstrapInvite(context.Background(),
 				func() string {
@@ -224,13 +240,17 @@ sources:
 				},
 				24*time.Hour, now,
 			)
-			if err == nil {
-				bootstrapCode = inv.Code
-				if inv.ExpiresAt != nil {
-					bootstrapTTL = inv.ExpiresAt.Sub(now).Round(time.Hour).String()
-				}
-			} else {
+			if err != nil {
+				// A populated DB with zero users is the canonical "fresh
+				// install"; if we can't mint the bootstrap invite the
+				// operator has no way to sign in. Fail loud so they can
+				// investigate (disk full, schema drift, etc).
 				fmt.Fprintf(os.Stderr, "init: ensure bootstrap invite: %v\n", err)
+				return 1
+			}
+			bootstrapCode = inv.Code
+			if inv.ExpiresAt != nil {
+				bootstrapTTL = inv.ExpiresAt.Sub(now).Round(time.Hour).String()
 			}
 		}
 	}
@@ -259,6 +279,77 @@ sources:
 	fmt.Println("     hooksctl forward render --to http://localhost:3000/webhooks/render")
 	fmt.Println("  5. Or register a long-lived consumer:")
 	fmt.Println("     hooksctl push add --source render --to https://my-svc.example.com/hooks")
+	return 0
+}
+
+// --- subcommand: invite -----------------------------------------------------
+
+// runInvite mints a signup invite directly against the local SQLite DB and
+// prints `<server-url>/signup?code=<code>`. Useful for ops who can shell
+// into the host but don't want to plumb an admin PAT through hooksctl.
+func runInvite(args []string) int {
+	fs := flag.NewFlagSet("invite", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	configPath := fs.String("config", "hooks.yaml", "path to hooks.yaml")
+	role := fs.String("role", "user", "invite role: admin or user")
+	scopesFlag := fs.String("scopes", "", "comma-separated default scopes (e.g. render,stripe)")
+	ttl := fs.Duration("ttl", 7*24*time.Hour, "invite lifetime")
+	serverURL := fs.String("server-url", "", "public URL for the printed signup link (env: HOOKS_PUBLIC_URL)")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *serverURL == "" {
+		*serverURL = os.Getenv("HOOKS_PUBLIC_URL")
+	}
+	if *role != "admin" && *role != "user" {
+		fmt.Fprintln(os.Stderr, "invite: --role must be admin or user")
+		return 2
+	}
+
+	cfg, err := config.Load(*configPath, sources.Default)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		return 1
+	}
+	st, err := store.OpenSQLite(cfg.DatabaseURL, store.SQLiteOptions{DedupeWindow: cfg.DedupeWindow})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "open db: %v\n", err)
+		return 1
+	}
+	defer func() { _ = st.Close() }()
+
+	code, err := invites.NewCode()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invite: code: %v\n", err)
+		return 1
+	}
+	now := time.Now().UTC()
+	exp := now.Add(*ttl)
+	scopes := []string{}
+	for _, s := range strings.Split(*scopesFlag, ",") {
+		s = strings.TrimSpace(s)
+		if s != "" {
+			scopes = append(scopes, s)
+		}
+	}
+	inv := store.Invite{
+		Code:          code,
+		Role:          store.Role(*role),
+		DefaultScopes: scopes,
+		CreatedAt:     now,
+		ExpiresAt:     &exp,
+	}
+	if err := st.InsertInvite(context.Background(), inv); err != nil {
+		fmt.Fprintf(os.Stderr, "invite: insert: %v\n", err)
+		return 1
+	}
+
+	base := *serverURL
+	if base == "" {
+		base = "http://localhost:8080  # set --server-url or HOOKS_PUBLIC_URL"
+	}
+	fmt.Printf("signup: %s/signup?code=%s\n", strings.TrimRight(base, "/"), code)
+	fmt.Printf("        (role: %s, single-use, expires in %s)\n", *role, ttl.Round(time.Hour))
 	return 0
 }
 
