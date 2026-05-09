@@ -1,0 +1,22 @@
+{{define "signup"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sign up — hooks</title>
+<link rel="stylesheet" href="/inspector/static/style.css">
+</head>
+<body class="centered">
+<form method="post" action="/signup" class="login">
+  <h1>Create account</h1>
+  {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <input type="hidden" name="code" value="{{.Code}}">
+  <label>Invite code <input type="text" value="{{.Code}}" readonly></label>
+  <label>Email <input type="email" name="email" autocomplete="email" autofocus required value="{{.Email}}"></label>
+  <label>Name <input type="text" name="name" autocomplete="name" required value="{{.Name}}"></label>
+  <label>Password <input type="password" name="password" autocomplete="new-password" required minlength="12"></label>
+  <p class="hint">Password must be at least 12 characters and not contain your email address.</p>
+  <button type="submit">Create account</button>
+</form>
+</body>
+</html>{{end}}

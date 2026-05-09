@@ -9,11 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/onebusaway/hooks/internal/audit"
 	"github.com/onebusaway/hooks/internal/secret"
 	"github.com/onebusaway/hooks/internal/store"
-	"github.com/onebusaway/hooks/internal/users"
 )
 
 // DefaultInviteTTL is the lifetime of a regular admin-issued invite.
@@ -65,11 +63,11 @@ type createRequest struct {
 }
 
 type inviteResponse struct {
-	Code             string    `json:"code"`
-	Role             string    `json:"role"`
-	DefaultScopes    []string  `json:"default_scopes"`
-	Bootstrap        bool      `json:"bootstrap"`
-	CreatedAt        time.Time `json:"created_at"`
+	Code             string     `json:"code"`
+	Role             string     `json:"role"`
+	DefaultScopes    []string   `json:"default_scopes"`
+	Bootstrap        bool       `json:"bootstrap"`
+	CreatedAt        time.Time  `json:"created_at"`
 	ExpiresAt        *time.Time `json:"expires_at,omitempty"`
 	ConsumedAt       *time.Time `json:"consumed_at,omitempty"`
 	ConsumedByUserID *string    `json:"consumed_by_user_id,omitempty"`
@@ -204,95 +202,35 @@ func (a *API) Signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate the invite first (404/410/409 disambiguation).
-	inv, err := a.Invites.GetByCode(r.Context(), req.Code)
-	if errors.Is(err, store.ErrNotFound) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "invite not found"})
-		return
-	}
+	u, err := Provision(
+		r.Context(), a.Invites, a.Users, a.Audit,
+		req.Code, req.Email, req.Name, secret.String(req.Password),
+		a.Now().UTC(),
+	)
 	if err != nil {
-		a.warn(r.Context(), "invites: signup get-by-code failed", slog.Any("err", err))
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
+		a.handleSignupErr(r.Context(), w, err)
 		return
 	}
-	now := a.Now().UTC()
-	if inv.ConsumedAt != nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "invite already consumed"})
-		return
-	}
-	if inv.ExpiresAt != nil && inv.ExpiresAt.Before(now) {
-		writeJSON(w, http.StatusGone, map[string]string{"error": "invite expired"})
-		return
-	}
-
-	// Password policy.
-	if err := users.ValidatePassword(req.Email, secret.String(req.Password)); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "password does not meet policy"})
-		return
-	}
-
-	hash, err := users.HashPassword(secret.String(req.Password))
-	if err != nil {
-		a.warn(r.Context(), "invites: signup hash failed", slog.Any("err", err))
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
-		return
-	}
-	u := store.User{
-		ID:            uuid.NewString(),
-		Email:         req.Email,
-		Name:          req.Name,
-		Role:          inv.Role,
-		PasswordHash:  hash,
-		DefaultScopes: append([]string{}, inv.DefaultScopes...),
-		CreatedAt:     now,
-	}
-
-	// Prefer the *SQLite atomic SignupTx when available; otherwise fall
-	// back to a best-effort sequence (in-memory test stores).
-	type signupTxer interface {
-		SignupTx(ctx context.Context, code string, u store.User, now time.Time) error
-	}
-	if tx, ok := a.Invites.(signupTxer); ok {
-		if err := tx.SignupTx(r.Context(), req.Code, u, now); err != nil {
-			a.handleSignupErr(r.Context(), w, err)
-			return
-		}
-	} else {
-		// Fallback: best-effort sequence. Not safe under concurrent signup
-		// races, but used only by tests with a mock store.
-		if err := a.Users.Insert(r.Context(), u); err != nil {
-			a.warn(r.Context(), "invites: signup user insert failed", slog.Any("err", err))
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
-			return
-		}
-		if err := a.Invites.MarkConsumed(r.Context(), req.Code, u.ID, now); err != nil {
-			a.warn(r.Context(), "invites: signup mark-consumed failed", slog.Any("err", err))
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
-			return
-		}
-		_, _ = a.Invites.MarkBootstrapsConsumed(r.Context(), u.ID, now)
-	}
-
-	a.recordAudit(r.Context(), &u.ID, "user.create", "user", u.ID, map[string]any{
-		"email": u.Email,
-		"role":  string(u.Role),
-	})
-	a.recordAudit(r.Context(), &u.ID, "invite.consume", "invite", req.Code, nil)
 
 	writeJSON(w, http.StatusCreated, signupResponse{UserID: u.ID, Email: u.Email, Role: string(u.Role)})
 }
 
 func (a *API) handleSignupErr(ctx context.Context, w http.ResponseWriter, err error) {
-	if errors.Is(err, store.ErrInviteConsumed) {
+	switch {
+	case errors.Is(err, ErrSignupInviteNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "invite not found"})
+	case errors.Is(err, ErrSignupInviteConsumed):
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "invite already consumed"})
-		return
-	}
-	if errors.Is(err, store.ErrEmailInUse) {
+	case errors.Is(err, ErrSignupInviteExpired):
+		writeJSON(w, http.StatusGone, map[string]string{"error": "invite expired"})
+	case errors.Is(err, ErrSignupBadPassword):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "password does not meet policy"})
+	case errors.Is(err, ErrSignupEmailInUse):
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "email already in use"})
-		return
+	default:
+		a.warn(ctx, "invites: signup failed", slog.Any("err", err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 	}
-	a.warn(ctx, "invites: signup tx failed", slog.Any("err", err))
-	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 }
 
 func toInviteResponse(inv store.Invite) inviteResponse {

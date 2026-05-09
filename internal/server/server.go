@@ -33,6 +33,7 @@ import (
 	"github.com/onebusaway/hooks/internal/tokens"
 	pkgUsers "github.com/onebusaway/hooks/internal/users"
 	"github.com/onebusaway/hooks/internal/web"
+	"github.com/onebusaway/hooks/internal/webpages"
 )
 
 // Server bundles all the runtime components.
@@ -175,6 +176,16 @@ func Build(cfg *config.Config, registry *sources.Registry, logger *slog.Logger) 
 		return nil, err
 	}
 	insp.Register(mux)
+
+	// Server-rendered /login and /signup pages (the JSON /api/auth/login
+	// and /api/auth/signup endpoints remain for hooksctl + SPA callers).
+	signupFn := webpages.DefaultSignupFunc(st.Invites(), st.Users(), auditRec)
+	pages, err := webpages.New(authMgr, signupFn, logger)
+	if err != nil {
+		_ = st.Close()
+		return nil, err
+	}
+	pages.Register(mux)
 
 	// Auth + me + admin + invites + devicepair routes.
 	registerAuthRoutes(mux, authMgr, authAPI, invitesAPI, devicePairAPI, meAPI, adminAPI)

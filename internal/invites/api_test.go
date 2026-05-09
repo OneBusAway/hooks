@@ -64,7 +64,9 @@ func TestCreateAndList(t *testing.T) {
 
 	body, _ := json.Marshal(createRequest{Role: "user", DefaultScopes: []string{"render"}})
 	resp, err := http.Post(srv.URL+"/api/invites", "application/json", bytes.NewReader(body))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("create: %d", resp.StatusCode)
 	}
@@ -77,7 +79,9 @@ func TestCreateAndList(t *testing.T) {
 
 	// List shows it.
 	resp, err = http.Get(srv.URL + "/api/invites")
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("list: %d", resp.StatusCode)
@@ -106,7 +110,9 @@ func TestSignup_HappyPath(t *testing.T) {
 		Name: "Alice", Password: "supercalifragilistic",
 	})
 	resp, err := http.Post(srv.URL+"/api/auth/signup", "application/json", bytes.NewReader(body))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("signup: %d", resp.StatusCode)
 	}
@@ -136,7 +142,9 @@ func TestSignup_HappyPath(t *testing.T) {
 		Name: "Bob", Password: "supercalifragilistic2",
 	})
 	resp, err = http.Post(srv.URL+"/api/auth/signup", "application/json", bytes.NewReader(body))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if resp.StatusCode != http.StatusConflict {
 		t.Errorf("replay: %d", resp.StatusCode)
 	}
@@ -164,7 +172,9 @@ func TestSignup_ExpiredInvite_410(t *testing.T) {
 		Name: "A", Password: "supercalifragilistic",
 	})
 	resp, err := http.Post(srv.URL+"/api/auth/signup", "application/json", bytes.NewReader(body))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusGone {
 		t.Fatalf("expired: %d", resp.StatusCode)
@@ -192,7 +202,9 @@ func TestSignup_BadPassword_400(t *testing.T) {
 		Name: "A", Password: "short",
 	})
 	resp, err := http.Post(srv.URL+"/api/auth/signup", "application/json", bytes.NewReader(body))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status: %d", resp.StatusCode)
