@@ -185,7 +185,13 @@ func Build(cfg *config.Config, registry *sources.Registry, logger *slog.Logger) 
 		_ = st.Close()
 		return nil, err
 	}
-	pages.Register(mux)
+	pages.MountDevice(devicePairAPI)
+	// Run page handlers through the session middleware so DeviceGET
+	// can read (*User, *Session) from context and DevicePOST's CSRF
+	// check has the post-session cookie to compare against. /login and
+	// /signup also run through the middleware; it's a no-op when the
+	// caller has no existing session cookie.
+	pages.RegisterWithMiddleware(mux, authMgr.Middleware)
 
 	// Auth + me + admin + invites + devicepair routes.
 	registerAuthRoutes(mux, authMgr, authAPI, invitesAPI, devicePairAPI, meAPI, adminAPI)

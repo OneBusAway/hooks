@@ -1,0 +1,17 @@
+{{define "device_lookup"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Approve a device — hooks</title>
+<link rel="stylesheet" href="/inspector/static/style.css">
+</head>
+<body class="centered">
+<form method="get" action="/device" class="login">
+  <h1>Approve a device</h1>
+  {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+  <p class="hint">Enter the code shown by your CLI.</p>
+  <label>User code <input type="text" name="user_code" autofocus required value="{{.UserCode}}" placeholder="XXXX-YYYY"></label>
+  <button type="submit">Continue</button>
+</form>
+</body>
+</html>{{end}}

@@ -133,7 +133,7 @@ All new and altered tables live in `internal/store/schema.sql` (the canonical sc
 
 - [x] 11.1 `/login` page: serve embedded HTML form, POST to `/api/auth/login`, redirect on success; include hidden CSRF token; render error message slot for invalid credentials
 - [x] 11.2 `/signup` page: serve form expecting `?code=` param; POST to `/api/auth/signup`; include hidden CSRF token; on success redirect to `/login`
-- [ ] 11.3 `/device` page: prompt for user_code, display requesting IP / user-agent / requested scopes (with narrowing checkboxes), the "Approve only if you started this on this machine" warning, the password re-entry field, and a CSRF token. POST to `/api/auth/device/approve`; "Deny" button POSTs to `/api/auth/device/deny`.
+- [x] 11.3 `/device` page: prompt for user_code, display requesting IP / user-agent / requested scopes (with narrowing checkboxes), the "Approve only if you started this on this machine" warning, the password re-entry field, and a CSRF token. POST to `/api/auth/device/approve`; "Deny" button POSTs to `/api/auth/device/deny`.
 - [ ] 11.4 `/inspector/me`: profile + own tokens (filtered by `kind`) + own subscriptions + "mint ephemeral PAT" form (CSRF-protected); admin sees a link to `/inspector/users` and `/inspector/audit`
 - [ ] 11.5 `/inspector/users` (admin): user table, "Issue invite" form (signup URL shown once), per-row deactivate (with email-confirmation modal; refuses last-admin), reactivate, reset-password, edit-default-scopes — all CSRF-protected
 - [ ] 11.6 `/inspector/audit` (admin): audit-event log with actor and time-range filtering

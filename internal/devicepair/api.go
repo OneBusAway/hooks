@@ -16,6 +16,36 @@ import (
 	"github.com/onebusaway/hooks/internal/users"
 )
 
+// Typed errors returned by ApproveCore and DenyCore. HTTP handlers and
+// the server-rendered /device page both translate these into the
+// appropriate response (status code or rendered error message). Keeping
+// the typed-error vocabulary stable lets the web layer reuse the same
+// validation logic that the JSON API exercises.
+var (
+	// ErrApproveBadInput indicates an empty user_code or password.
+	ErrApproveBadInput = errors.New("device-pairing: user_code and password required")
+	// ErrApprovePasswordVerify indicates the supplied password did not
+	// match the caller's stored hash.
+	ErrApprovePasswordVerify = errors.New("device-pairing: password verification failed")
+	// ErrApproveUserCodeNotFound indicates no pairing exists for the
+	// supplied user_code.
+	ErrApproveUserCodeNotFound = errors.New("device-pairing: user_code not found")
+	// ErrApprovePairingNotPending indicates the pairing is no longer in
+	// 'pending' state (denied, approved, expired, or done).
+	ErrApprovePairingNotPending = errors.New("device-pairing: pairing not pending")
+	// ErrApprovePairingExpired indicates the pairing has outlived its TTL.
+	ErrApprovePairingExpired = errors.New("device-pairing: pairing expired")
+	// ErrApproveScopesExceedRequested indicates granted_scopes contains a
+	// scope the CLI did not request.
+	ErrApproveScopesExceedRequested = errors.New("device-pairing: granted_scopes exceeds requested_scopes")
+	// ErrApproveScopesExceedAuthority indicates granted_scopes contains a
+	// scope the calling user does not hold.
+	ErrApproveScopesExceedAuthority = errors.New("device-pairing: granted_scopes exceeds caller's authority")
+	// ErrDenyUserCodeNotFound indicates no pairing exists for the supplied
+	// user_code on a deny attempt.
+	ErrDenyUserCodeNotFound = errors.New("device-pairing: user_code not found")
+)
+
 // PollInterval is the recommended client-side poll cadence (seconds);
 // returned to the CLI on /device/start.
 const PollInterval = 5
@@ -298,87 +328,115 @@ func (a *API) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.UserCode = NormalizeUserCode(req.UserCode)
-	if req.UserCode == "" || req.Password == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_code and password required"})
+	if err := a.ApproveCore(r.Context(), caller, req.UserCode, secret.String(req.Password), req.GrantedScopes); err != nil {
+		writeApproveError(w, err)
 		return
 	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "approved"})
+}
 
-	// Re-verify the password (session alone is insufficient).
-	pwOK, err := users.VerifyPassword(secret.String(req.Password), caller.PasswordHash)
+// ApproveCore performs the device-pairing approval logic shared between
+// the JSON HTTP handler and the server-rendered /device page. It
+// re-verifies the caller's password (session alone is insufficient),
+// validates that grantedScopes is a subset of both requested_scopes and
+// the caller's held scopes, then mints a kind='pat' token bound to the
+// caller. An empty grantedScopes argument means "grant exactly the
+// requested set" (the CLI's default UX). Returns one of the typed
+// Err* sentinels above on validation failure; an unwrapped non-sentinel
+// error indicates an unexpected internal failure (logged at warn level).
+func (a *API) ApproveCore(ctx context.Context, caller store.User, userCode string, password secret.String, grantedScopes []string) error {
+	if userCode == "" || password.Reveal() == "" {
+		return ErrApproveBadInput
+	}
+	pwOK, err := users.VerifyPassword(password, caller.PasswordHash)
 	if err != nil {
-		a.warn(r.Context(), "device-pairing approve: password verify error", slog.Any("err", err))
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
-		return
+		a.warn(ctx, "device-pairing approve: password verify error", slog.Any("err", err))
+		return err
 	}
 	if !pwOK {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "password verification failed"})
-		return
+		return ErrApprovePasswordVerify
 	}
 
-	dp, err := a.Pairings.GetByUserCode(r.Context(), req.UserCode)
+	dp, err := a.Pairings.GetByUserCode(ctx, userCode)
 	if errors.Is(err, store.ErrNotFound) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user_code not found"})
-		return
+		return ErrApproveUserCodeNotFound
 	}
 	if err != nil {
-		a.warn(r.Context(), "device-pairing approve: lookup failed", slog.Any("err", err))
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
-		return
+		a.warn(ctx, "device-pairing approve: lookup failed", slog.Any("err", err))
+		return err
 	}
 	if dp.Status != store.DevicePairingStatusPending {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "pairing not pending"})
-		return
+		return ErrApprovePairingNotPending
 	}
 	if a.Now().UTC().After(dp.ExpiresAt) {
-		writeJSON(w, http.StatusGone, map[string]string{"error": "pairing expired"})
-		return
+		return ErrApprovePairingExpired
 	}
 
 	// granted_scopes ⊆ requested_scopes ∩ caller's held scopes.
-	if len(req.GrantedScopes) == 0 {
-		req.GrantedScopes = append([]string{}, dp.RequestedScopes...)
+	if len(grantedScopes) == 0 {
+		grantedScopes = append([]string{}, dp.RequestedScopes...)
 	}
-	if !subset(req.GrantedScopes, dp.RequestedScopes) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "granted_scopes exceeds requested_scopes"})
-		return
+	if !subset(grantedScopes, dp.RequestedScopes) {
+		return ErrApproveScopesExceedRequested
 	}
 	heldScopes := userHeldScopes(caller)
-	if !subset(req.GrantedScopes, heldScopes) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "granted_scopes exceeds caller's authority"})
-		return
+	if !subset(grantedScopes, heldScopes) {
+		return ErrApproveScopesExceedAuthority
 	}
 
 	// Mint a kind='pat' token. Plaintext is shown to the CLI exactly once
 	// when it polls (and the row is purged on fetch).
-	res, err := tokens.Generate("device-pairing", req.GrantedScopes)
+	res, err := tokens.Generate("device-pairing", grantedScopes)
 	if err != nil {
-		a.warn(r.Context(), "device-pairing approve: token generate failed", slog.Any("err", err))
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
-		return
+		a.warn(ctx, "device-pairing approve: token generate failed", slog.Any("err", err))
+		return err
 	}
 	tok := store.Token{
-		ID: res.ID, Name: "device-pairing", Scopes: req.GrantedScopes,
+		ID: res.ID, Name: "device-pairing", Scopes: grantedScopes,
 		SecretHash: res.Hash, CreatedAt: a.Now().UTC(),
 		Kind: store.TokenKindPAT,
 	}
-	if err := a.Server.ApproveDevicePairing(r.Context(), req.UserCode, tok, res.Plaintext, caller.ID, a.Now().UTC()); err != nil {
+	if err := a.Server.ApproveDevicePairing(ctx, userCode, tok, res.Plaintext, caller.ID, a.Now().UTC()); err != nil {
 		// Do NOT echo err.Error() to the client: the underlying error
 		// can carry SQL fragments or, worse, parameter values from a
 		// future Errorf-wrapping change (which could include the
 		// plaintext token). Operators get the detail via Logger.
-		a.warn(r.Context(), "device-pairing approve failed",
-			slog.String("user_code", req.UserCode),
+		a.warn(ctx, "device-pairing approve failed",
+			slog.String("user_code", userCode),
 			slog.String("token_id", tok.ID),
 			slog.Any("err", err),
 		)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
-		return
+		return err
 	}
-	a.recordAudit(r.Context(), &caller.ID, audit.ActionDevicePairingApprove, "device_pairing", dp.DeviceCode, map[string]any{
-		"granted_scopes": req.GrantedScopes,
+	a.recordAudit(ctx, &caller.ID, audit.ActionDevicePairingApprove, "device_pairing", dp.DeviceCode, map[string]any{
+		"granted_scopes": grantedScopes,
 		"token_id":       tok.ID,
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "approved"})
+	return nil
+}
+
+// writeApproveError translates an ApproveCore error into the HTTP
+// response the JSON API contract expects. Unknown errors fall through
+// to a generic 500.
+func writeApproveError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, ErrApproveBadInput):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_code and password required"})
+	case errors.Is(err, ErrApprovePasswordVerify):
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "password verification failed"})
+	case errors.Is(err, ErrApproveUserCodeNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user_code not found"})
+	case errors.Is(err, ErrApprovePairingNotPending):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "pairing not pending"})
+	case errors.Is(err, ErrApprovePairingExpired):
+		writeJSON(w, http.StatusGone, map[string]string{"error": "pairing expired"})
+	case errors.Is(err, ErrApproveScopesExceedRequested):
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "granted_scopes exceeds requested_scopes"})
+	case errors.Is(err, ErrApproveScopesExceedAuthority):
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "granted_scopes exceeds caller's authority"})
+	default:
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
+	}
 }
 
 type denyRequest struct {
@@ -397,17 +455,41 @@ func (a *API) Deny(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.UserCode = NormalizeUserCode(req.UserCode)
-	if err := a.Pairings.Deny(r.Context(), req.UserCode, caller.ID); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
+	if err := a.DenyCore(r.Context(), caller, req.UserCode); err != nil {
+		switch {
+		case errors.Is(err, ErrDenyUserCodeNotFound):
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
-			return
+		default:
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 		}
-		a.warn(r.Context(), "device-pairing deny: failed", slog.Any("err", err))
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 		return
 	}
-	a.recordAudit(r.Context(), &caller.ID, audit.ActionDevicePairingDeny, "device_pairing", req.UserCode, nil)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// LookupPairing returns the device-pairing row for the supplied
+// user_code, used by the server-rendered /device page to display the
+// requesting client's IP, user-agent, and requested scopes before the
+// user types a password. Returns store.ErrNotFound if no row matches.
+func (a *API) LookupPairing(ctx context.Context, userCode string) (store.DevicePairing, error) {
+	return a.Pairings.GetByUserCode(ctx, userCode)
+}
+
+// DenyCore performs the device-pairing deny logic shared between the
+// JSON HTTP handler and the server-rendered /device page. It transitions
+// the pairing identified by userCode to status='denied' and records an
+// audit event. Returns ErrDenyUserCodeNotFound when no row matches; any
+// other returned error indicates an unexpected internal failure.
+func (a *API) DenyCore(ctx context.Context, caller store.User, userCode string) error {
+	if err := a.Pairings.Deny(ctx, userCode, caller.ID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return ErrDenyUserCodeNotFound
+		}
+		a.warn(ctx, "device-pairing deny: failed", slog.Any("err", err))
+		return err
+	}
+	a.recordAudit(ctx, &caller.ID, audit.ActionDevicePairingDeny, "device_pairing", userCode, nil)
+	return nil
 }
 
 // RunSweeper transitions stale pending pairings to expired and deletes

@@ -51,14 +51,16 @@ const PreSessionCSRFCookie = "hooks_csrf_pre"
 // error mapped to a user-visible message on failure.
 type SignupFunc func(ctx context.Context, code, email, name string, password secret.String, now time.Time) (store.User, error)
 
-// Pages is the handler set for /login and /signup.
+// Pages is the handler set for /login, /signup, and (when MountDevice
+// has been called) /device.
 type Pages struct {
 	Auth   *auth.Manager
 	Signup SignupFunc
 	Logger *slog.Logger
 	Now    func() time.Time
 
-	tpls *template.Template
+	tpls   *template.Template
+	device DeviceApprover
 }
 
 // New constructs a Pages handler. Templates are parsed once at
@@ -82,14 +84,38 @@ func New(authMgr *auth.Manager, signup SignupFunc, logger *slog.Logger) (*Pages,
 	}, nil
 }
 
-// Register mounts /login and /signup on mux. Callers should not wrap
-// these in the CSRF middleware: the page handlers manage their own
-// pre-session CSRF cookie and verify it inline.
+// Register mounts /login, /signup, and (when a device approver has been
+// attached via MountDevice) /device on mux. Callers should not wrap
+// these in the CSRF middleware: the page handlers manage their own CSRF
+// verification inline (pre-session for /login + /signup, post-session
+// for /device).
+//
+// Register installs handlers without middleware. server.Build uses
+// RegisterWithMiddleware to wrap them in the session middleware so
+// DeviceGET sees the (*User, *Session) attached to the context.
 func (p *Pages) Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /login", p.LoginGET)
-	mux.HandleFunc("POST /login", p.LoginPOST)
-	mux.HandleFunc("GET /signup", p.SignupGET)
-	mux.HandleFunc("POST /signup", p.SignupPOST)
+	p.RegisterWithMiddleware(mux, nil)
+}
+
+// RegisterWithMiddleware mounts the same routes as Register, wrapping
+// each handler in middleware before installation. A nil middleware is
+// equivalent to Register's behavior. The middleware is applied per-route
+// (rather than per-mux) so the session middleware composes cleanly with
+// any future per-route middleware (rate limiting, etc.) without forcing
+// a sub-mux.
+func (p *Pages) RegisterWithMiddleware(mux *http.ServeMux, mw func(http.Handler) http.Handler) {
+	wrap := func(h http.Handler) http.Handler {
+		if mw == nil {
+			return h
+		}
+		return mw(h)
+	}
+	mux.Handle("GET /login", wrap(http.HandlerFunc(p.LoginGET)))
+	mux.Handle("POST /login", wrap(http.HandlerFunc(p.LoginPOST)))
+	mux.Handle("GET /signup", wrap(http.HandlerFunc(p.SignupGET)))
+	mux.Handle("POST /signup", wrap(http.HandlerFunc(p.SignupPOST)))
+	mux.Handle("GET "+DevicePageRoute, wrap(http.HandlerFunc(p.DeviceGET)))
+	mux.Handle("POST "+DevicePageRoute, wrap(http.HandlerFunc(p.DevicePOST)))
 }
 
 // LoginGET renders the login form, seeding a pre-session CSRF cookie if

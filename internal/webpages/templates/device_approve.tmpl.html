@@ -1,0 +1,42 @@
+{{define "device_approve"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Approve {{.UserCode}} — hooks</title>
+<link rel="stylesheet" href="/inspector/static/style.css">
+</head>
+<body class="centered">
+<form method="post" action="/device" class="login">
+  <h1>Approve a device</h1>
+  {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+
+  <p class="warning"><strong>Approve only if you started this on this machine.</strong></p>
+
+  <dl class="approver-context">
+    <dt>Code</dt><dd><code>{{.UserCode}}</code></dd>
+    <dt>Requesting IP</dt><dd>{{if .RequestingIP}}<code>{{.RequestingIP}}</code>{{else}}<em>(unknown)</em>{{end}}</dd>
+    <dt>Requesting user-agent</dt><dd>{{if .RequestingUserAgent}}<code>{{.RequestingUserAgent}}</code>{{else}}<em>(unknown)</em>{{end}}</dd>
+    <dt>You</dt><dd>{{.CallerEmail}}</dd>
+  </dl>
+
+  <fieldset class="scopes">
+    <legend>Requested scopes (uncheck to narrow)</legend>
+    {{range .RequestedScopes}}
+    <label><input type="checkbox" name="granted_scopes" value="{{.}}" checked> {{.}}</label>
+    {{end}}
+  </fieldset>
+
+  <label>Re-enter your password
+    <input type="password" name="password" autocomplete="current-password" required>
+  </label>
+
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <input type="hidden" name="user_code" value="{{.UserCode}}">
+
+  <div class="actions">
+    <button type="submit" name="action" value="approve">Approve</button>
+    <button type="submit" name="action" value="deny" class="secondary">Deny</button>
+  </div>
+</form>
+</body>
+</html>{{end}}
