@@ -170,12 +170,14 @@ func Build(cfg *config.Config, registry *sources.Registry, logger *slog.Logger) 
 	pushAPI.Audit = auditRec
 	pushAPI.Register(mux)
 
-	// Inspector.
+	// Inspector. The session manager wires up cookie-session auth that
+	// complements the legacy bearer-cookie path (tasks 11.10, 11.12).
 	insp, err := inspector.New(st.Events(), st.Tokens(), st.PushSubscriptions(), notifier, pmgr, bearerAuth, configuredSources, logger)
 	if err != nil {
 		_ = st.Close()
 		return nil, err
 	}
+	insp.Sessions = authMgr
 	insp.Register(mux)
 
 	// Server-rendered /login and /signup pages (the JSON /api/auth/login

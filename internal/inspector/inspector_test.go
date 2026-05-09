@@ -119,8 +119,11 @@ func TestInspectorLoginRequired(t *testing.T) {
 		t.Fatalf("expected redirect, got %d", resp.StatusCode)
 	}
 	loc := resp.Header.Get("Location")
-	if !strings.Contains(loc, "/inspector/login") {
-		t.Fatalf("expected redirect to login, got %q", loc)
+	// Without a session manager wired, the inspector still redirects
+	// anonymous GETs but to the new /login page (task 11.10). The legacy
+	// /inspector/login form remains available by direct visit.
+	if !strings.HasPrefix(loc, "/login") {
+		t.Fatalf("expected redirect to /login, got %q", loc)
 	}
 }
 
@@ -148,6 +151,9 @@ func TestInspectorRejectsNonAdmin(t *testing.T) {
 	if resp.StatusCode != http.StatusFound {
 		t.Fatalf("expected redirect, got %d", resp.StatusCode)
 	}
+	if loc := resp.Header.Get("Location"); !strings.HasPrefix(loc, "/login") {
+		t.Fatalf("expected redirect to /login, got %q", loc)
+	}
 }
 
 func TestInspectorRevokedCookieRedirectsAndClears(t *testing.T) {
@@ -166,7 +172,7 @@ func TestInspectorRevokedCookieRedirectsAndClears(t *testing.T) {
 	if resp.StatusCode != http.StatusFound {
 		t.Fatalf("expected redirect, got %d", resp.StatusCode)
 	}
-	if loc := resp.Header.Get("Location"); !strings.Contains(loc, "/inspector/login") {
+	if loc := resp.Header.Get("Location"); !strings.HasPrefix(loc, "/login") {
 		t.Fatalf("expected redirect to login, got %q", loc)
 	}
 	// Cookie should be cleared.

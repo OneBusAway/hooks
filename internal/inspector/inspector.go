@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebusaway/hooks/internal/auth"
 	"github.com/onebusaway/hooks/internal/pubsub"
 	"github.com/onebusaway/hooks/internal/push"
 	"github.com/onebusaway/hooks/internal/secret"
@@ -40,16 +41,22 @@ const cookieName = "hooks_inspector_token"
 
 // Inspector is the http handler set for /inspector.
 type Inspector struct {
-	Events     store.EventStore
-	Tokens     store.TokenStore
-	Subs       store.PushSubscriptionStore
-	Notifier   *pubsub.Notifier
-	Push       *push.Manager
-	Auth       *tokens.Authenticator
-	Logger     *slog.Logger
-	Sources    []string
-	tpls       *template.Template
-	staticSub  fs.FS
+	Events   store.EventStore
+	Tokens   store.TokenStore
+	Subs     store.PushSubscriptionStore
+	Notifier *pubsub.Notifier
+	Push     *push.Manager
+	Auth     *tokens.Authenticator
+	// Sessions, when non-nil, enables session-cookie authentication on the
+	// inspector router (task 11.12). The middleware runs before each
+	// handler so requireAdmin can read (*User, *Session) from context. A
+	// nil Sessions falls back to the legacy hooks_inspector_token bearer
+	// cookie path only.
+	Sessions  *auth.Manager
+	Logger    *slog.Logger
+	Sources   []string
+	tpls      *template.Template
+	staticSub fs.FS
 }
 
 // New constructs an Inspector. Templates are parsed at construction.
@@ -83,61 +90,100 @@ func New(
 	}, nil
 }
 
-// Register mounts inspector routes onto mux.
+// Register mounts inspector routes onto mux. If in.Sessions is non-nil
+// (task 11.12), each handler is wrapped in the session middleware so the
+// inspector can authenticate via the hooks_session cookie alongside the
+// legacy hooks_inspector_token bearer cookie.
 func (in *Inspector) Register(mux *http.ServeMux) {
+	wrap := func(h http.HandlerFunc) http.Handler {
+		if in.Sessions == nil {
+			return h
+		}
+		return in.Sessions.Middleware(h)
+	}
+
 	mux.Handle("GET /inspector/static/", http.StripPrefix("/inspector/static/", http.FileServer(http.FS(in.staticSub))))
-	mux.HandleFunc("GET /inspector/login", in.loginGET)
-	mux.HandleFunc("POST /inspector/login", in.loginPOST)
-	mux.HandleFunc("GET /inspector/logout", in.logout)
-	mux.HandleFunc("GET /inspector", in.index)
-	mux.HandleFunc("GET /inspector/events/{source}/{sequence}", in.detail)
-	mux.HandleFunc("POST /inspector/events/{source}/{sequence}/replay", in.replay)
-	mux.HandleFunc("GET /inspector/tokens", in.tokensList)
-	mux.HandleFunc("POST /inspector/tokens/create", in.tokensCreate)
-	mux.HandleFunc("POST /inspector/tokens/{id}/revoke", in.tokensRevoke)
-	mux.HandleFunc("GET /inspector/push", in.pushList)
-	mux.HandleFunc("POST /inspector/push/create", in.pushCreate)
-	mux.HandleFunc("POST /inspector/push/{id}/pause", in.pushPause)
-	mux.HandleFunc("POST /inspector/push/{id}/resume", in.pushResume)
-	mux.HandleFunc("POST /inspector/push/{id}/test", in.pushTest)
-	mux.HandleFunc("POST /inspector/push/{id}/rotate", in.pushRotate)
-	mux.HandleFunc("POST /inspector/push/{id}/delete", in.pushDelete)
+	mux.Handle("GET /inspector/login", wrap(in.loginGET))
+	mux.Handle("POST /inspector/login", wrap(in.loginPOST))
+	mux.Handle("GET /inspector/logout", wrap(in.logout))
+	mux.Handle("GET /inspector", wrap(in.index))
+	mux.Handle("GET /inspector/events/{source}/{sequence}", wrap(in.detail))
+	mux.Handle("POST /inspector/events/{source}/{sequence}/replay", wrap(in.replay))
+	mux.Handle("GET /inspector/tokens", wrap(in.tokensList))
+	mux.Handle("POST /inspector/tokens/create", wrap(in.tokensCreate))
+	mux.Handle("POST /inspector/tokens/{id}/revoke", wrap(in.tokensRevoke))
+	mux.Handle("GET /inspector/push", wrap(in.pushList))
+	mux.Handle("POST /inspector/push/create", wrap(in.pushCreate))
+	mux.Handle("POST /inspector/push/{id}/pause", wrap(in.pushPause))
+	mux.Handle("POST /inspector/push/{id}/resume", wrap(in.pushResume))
+	mux.Handle("POST /inspector/push/{id}/test", wrap(in.pushTest))
+	mux.Handle("POST /inspector/push/{id}/rotate", wrap(in.pushRotate))
+	mux.Handle("POST /inspector/push/{id}/delete", wrap(in.pushDelete))
 }
 
-// requireAdmin enforces admin scope via the cookie token.
+// requireAdmin enforces admin access for an inspector request.
 //
-// Outcomes:
-//   - missing/invalid cookie → GET redirects to /inspector/login, others 401.
-//   - lookup error from a non-auth source (DB unreachable, etc.) → 503 so
-//     operators don't mistake an outage for a bad token.
-//   - valid token without admin scope → 403 for all methods.
-func (in *Inspector) requireAdmin(w http.ResponseWriter, r *http.Request) (store.Token, bool) {
+// Authentication sources, in order:
+//  1. hooks_session cookie (task 11.12): if present and the user is admin,
+//     allow. If the user is non-admin, GET redirects to /inspector/me;
+//     non-GET returns 403.
+//  2. legacy hooks_inspector_token cookie (task 11.11): plaintext bearer
+//     token in a cookie; admin scope required.
+//
+// Outcomes when no auth is present:
+//   - GET → 302 to /login?next=<path> (task 11.10).
+//   - non-GET → 401.
+//
+// Lookup failures from a non-auth source (DB unreachable, etc.) → 503 so
+// operators don't mistake an outage for a bad token.
+func (in *Inspector) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
+	// 1. Session cookie path.
+	if in.Sessions != nil {
+		if user, _, ok := in.Sessions.FromContext(r.Context()); ok {
+			if user.Role == store.RoleAdmin {
+				return true
+			}
+			// Logged in as non-admin: GET redirects to /inspector/me;
+			// mutations 403.
+			if r.Method == http.MethodGet {
+				http.Redirect(w, r, "/inspector/me", http.StatusFound)
+				return false
+			}
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return false
+		}
+	}
+	// 2. Legacy bearer cookie path.
 	c, err := r.Cookie(cookieName)
 	if err != nil || c.Value == "" {
 		in.denyUnauthorized(w, r)
-		return store.Token{}, false
+		return false
 	}
 	tok, err := in.Auth.ResolvePlaintext(r.Context(), c.Value)
 	if err != nil {
 		if tokens.IsAuthError(err) {
 			clearCookie(w)
 			in.denyUnauthorized(w, r)
-			return store.Token{}, false
+			return false
 		}
 		in.Logger.Error("inspector: auth lookup failed", slog.String("error", err.Error()))
 		http.Error(w, "auth temporarily unavailable", http.StatusServiceUnavailable)
-		return store.Token{}, false
+		return false
 	}
 	if !store.HasScope(tok.Scopes, store.ScopeAdmin) {
 		http.Error(w, "forbidden", http.StatusForbidden)
-		return store.Token{}, false
+		return false
 	}
-	return tok, true
+	return true
 }
 
+// denyUnauthorized handles the no-auth-at-all case. GETs redirect to the
+// new /login page with a ?next= so the user lands back on the inspector
+// after logging in (task 11.10). Mutations get a flat 401.
 func (in *Inspector) denyUnauthorized(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		http.Redirect(w, r, "/inspector/login", http.StatusFound)
+		next := r.URL.RequestURI()
+		http.Redirect(w, r, "/login?next="+url.QueryEscape(next), http.StatusFound)
 		return
 	}
 	http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -186,7 +232,7 @@ func clearCookie(w http.ResponseWriter) {
 
 // index renders the recent-events list.
 func (in *Inspector) index(w http.ResponseWriter, r *http.Request) {
-	if _, ok := in.requireAdmin(w, r); !ok {
+	if !in.requireAdmin(w, r) {
 		return
 	}
 	selected := r.URL.Query().Get("source")
@@ -278,7 +324,7 @@ func preview(body []byte, n int) string {
 }
 
 func (in *Inspector) detail(w http.ResponseWriter, r *http.Request) {
-	if _, ok := in.requireAdmin(w, r); !ok {
+	if !in.requireAdmin(w, r) {
 		return
 	}
 	source := r.PathValue("source")
@@ -348,7 +394,7 @@ func hexDump(body []byte) string {
 }
 
 func (in *Inspector) replay(w http.ResponseWriter, r *http.Request) {
-	if _, ok := in.requireAdmin(w, r); !ok {
+	if !in.requireAdmin(w, r) {
 		return
 	}
 	source := r.PathValue("source")
@@ -374,7 +420,7 @@ func (in *Inspector) replay(w http.ResponseWriter, r *http.Request) {
 }
 
 func (in *Inspector) tokensList(w http.ResponseWriter, r *http.Request) {
-	if _, ok := in.requireAdmin(w, r); !ok {
+	if !in.requireAdmin(w, r) {
 		return
 	}
 	includeRevoked := r.URL.Query().Get("include-revoked") == "1"
@@ -391,7 +437,7 @@ func (in *Inspector) tokensList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (in *Inspector) tokensCreate(w http.ResponseWriter, r *http.Request) {
-	if _, ok := in.requireAdmin(w, r); !ok {
+	if !in.requireAdmin(w, r) {
 		return
 	}
 	if err := r.ParseForm(); err != nil {
@@ -418,7 +464,7 @@ func (in *Inspector) tokensCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (in *Inspector) tokensRevoke(w http.ResponseWriter, r *http.Request) {
-	if _, ok := in.requireAdmin(w, r); !ok {
+	if !in.requireAdmin(w, r) {
 		return
 	}
 	id := r.PathValue("id")
@@ -430,7 +476,7 @@ func (in *Inspector) tokensRevoke(w http.ResponseWriter, r *http.Request) {
 }
 
 func (in *Inspector) pushList(w http.ResponseWriter, r *http.Request) {
-	if _, ok := in.requireAdmin(w, r); !ok {
+	if !in.requireAdmin(w, r) {
 		return
 	}
 	subs, err := in.Subs.List(r.Context(), true)
@@ -489,7 +535,7 @@ func truncate(s string, n int) string {
 }
 
 func (in *Inspector) pushCreate(w http.ResponseWriter, r *http.Request) {
-	if _, ok := in.requireAdmin(w, r); !ok {
+	if !in.requireAdmin(w, r) {
 		return
 	}
 	if err := r.ParseForm(); err != nil {
@@ -551,7 +597,7 @@ func (in *Inspector) pushCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (in *Inspector) pushPause(w http.ResponseWriter, r *http.Request) {
-	if _, ok := in.requireAdmin(w, r); !ok {
+	if !in.requireAdmin(w, r) {
 		return
 	}
 	id := r.PathValue("id")
@@ -564,7 +610,7 @@ func (in *Inspector) pushPause(w http.ResponseWriter, r *http.Request) {
 }
 
 func (in *Inspector) pushResume(w http.ResponseWriter, r *http.Request) {
-	if _, ok := in.requireAdmin(w, r); !ok {
+	if !in.requireAdmin(w, r) {
 		return
 	}
 	id := r.PathValue("id")
@@ -577,7 +623,7 @@ func (in *Inspector) pushResume(w http.ResponseWriter, r *http.Request) {
 }
 
 func (in *Inspector) pushTest(w http.ResponseWriter, r *http.Request) {
-	if _, ok := in.requireAdmin(w, r); !ok {
+	if !in.requireAdmin(w, r) {
 		return
 	}
 	id := r.PathValue("id")
@@ -589,7 +635,7 @@ func (in *Inspector) pushTest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (in *Inspector) pushRotate(w http.ResponseWriter, r *http.Request) {
-	if _, ok := in.requireAdmin(w, r); !ok {
+	if !in.requireAdmin(w, r) {
 		return
 	}
 	id := r.PathValue("id")
@@ -627,7 +673,7 @@ func (in *Inspector) pushRotate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (in *Inspector) pushDelete(w http.ResponseWriter, r *http.Request) {
-	if _, ok := in.requireAdmin(w, r); !ok {
+	if !in.requireAdmin(w, r) {
 		return
 	}
 	id := r.PathValue("id")
