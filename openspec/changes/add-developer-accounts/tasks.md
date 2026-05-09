@@ -137,7 +137,7 @@ All new and altered tables live in `internal/store/schema.sql` (the canonical sc
 - [x] 11.4 `/inspector/me`: profile + own tokens (filtered by `kind`) + own subscriptions + "mint ephemeral PAT" form (CSRF-protected); admin sees a link to `/inspector/users` and `/inspector/audit`
 - [ ] 11.5 `/inspector/users` (admin): user table, "Issue invite" form (signup URL shown once), per-row deactivate (with email-confirmation modal; refuses last-admin), reactivate, reset-password, edit-default-scopes — all CSRF-protected
 - [x] 11.6 `/inspector/audit` (admin): audit-event log with actor and time-range filtering
-- [ ] 11.7 `/inspector/me/push`: user-owned push-subscription view mirroring `/inspector/push` but without the owner column
+- [x] 11.7 `/inspector/me/push`: user-owned push-subscription view mirroring `/inspector/push` but without the owner column
 - [x] 11.8 Update `/inspector/tokens` (admin): add owner column (`system` vs user email) and `kind` column; add optional `owner_user_id` field on Add Token form for minting on behalf of users
 - [x] 11.9 Update `/inspector/push` (admin): add owner column; add `?owner=` filter dropdown
 - [x] 11.10 Update `/inspector` redirect logic: anonymous → `/login?next=/inspector`; non-admin user → `/inspector/me`

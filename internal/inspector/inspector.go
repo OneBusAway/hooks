@@ -157,6 +157,17 @@ func (in *Inspector) Register(mux *http.ServeMux) {
 	mux.Handle("POST /inspector/me/tokens", wrapH(csrf(http.HandlerFunc(in.meCreateToken))))
 	mux.Handle("POST /inspector/me/tokens/{id}/revoke", wrapH(csrf(http.HandlerFunc(in.meRevokeToken))))
 
+	// /inspector/me/push (task 11.7) — user-owned push-subscription view
+	// mirroring /inspector/push without the owner column. Mutations share
+	// the CSRF middleware so the same double-submit + Origin contract
+	// applies as elsewhere on /inspector/me.
+	mux.Handle("GET /inspector/me/push", wrap(in.mePushIndex))
+	mux.Handle("POST /inspector/me/push/{id}/pause", wrapH(csrf(http.HandlerFunc(in.mePushPause))))
+	mux.Handle("POST /inspector/me/push/{id}/resume", wrapH(csrf(http.HandlerFunc(in.mePushResume))))
+	mux.Handle("POST /inspector/me/push/{id}/test", wrapH(csrf(http.HandlerFunc(in.mePushTest))))
+	mux.Handle("POST /inspector/me/push/{id}/rotate", wrapH(csrf(http.HandlerFunc(in.mePushRotate))))
+	mux.Handle("POST /inspector/me/push/{id}/delete", wrapH(csrf(http.HandlerFunc(in.mePushDelete))))
+
 	// /inspector/audit (task 11.6): admin-only HTML view of the audit log.
 	mux.Handle("GET /inspector/audit", wrap(in.auditList))
 }

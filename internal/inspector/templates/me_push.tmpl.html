@@ -1,0 +1,58 @@
+{{define "me_push"}}{{template "header" .}}
+<h1>My push subscriptions</h1>
+
+{{if .IsAdmin}}
+<div class="banner">
+  Viewing your own subscriptions. Admins can manage every owner at <a href="/inspector/push">/inspector/push</a>.
+</div>
+{{end}}
+
+{{if .Plaintext}}
+<div class="banner">New signing secret (shown once): <code>{{.Plaintext}}</code></div>
+{{end}}
+
+<table>
+  <thead><tr><th>ID</th><th>Source</th><th>Target</th><th>Cursor</th><th>Queue</th><th>Failures</th><th>Last error</th><th>Status</th><th></th></tr></thead>
+  <tbody>
+  {{range .Subs}}
+  <tr>
+    <td><code>{{.ID}}</code></td>
+    <td>{{.Source}}</td>
+    <td><code>{{.TargetURL}}</code></td>
+    <td>{{.Cursor}}</td>
+    <td>{{.QueueDepth}}</td>
+    <td>{{.ConsecutiveFailures}}</td>
+    <td><span class="trunc">{{.LastError}}</span></td>
+    <td>{{if .PausedAt}}paused{{else}}active{{end}}</td>
+    <td class="actions">
+      {{if .PausedAt}}
+        <form method="post" action="/inspector/me/push/{{.ID}}/resume">
+          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+          <button>Resume</button>
+        </form>
+      {{else}}
+        <form method="post" action="/inspector/me/push/{{.ID}}/pause">
+          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+          <button>Pause</button>
+        </form>
+      {{end}}
+      <form method="post" action="/inspector/me/push/{{.ID}}/test">
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <button>Test</button>
+      </form>
+      <form method="post" action="/inspector/me/push/{{.ID}}/rotate">
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <button>Rotate</button>
+      </form>
+      <form method="post" action="/inspector/me/push/{{.ID}}/delete">
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <button class="danger">Delete</button>
+      </form>
+    </td>
+  </tr>
+  {{else}}
+  <tr><td colspan="9" class="empty">No subscriptions.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+{{template "footer" .}}{{end}}
