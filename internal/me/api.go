@@ -15,8 +15,8 @@ import (
 
 // MaxTokenTTL caps the absolute expires_at requested by /api/me/tokens
 // (1 year). Ephemeral tokens carry a separate 24h-idle policy
-// (store.SQLite.ExpireEphemeralTokensIdle) that is NOT yet wired into
-// the prune loop — see tasks.md §12.7.
+// enforced by the prune loop via
+// store.SQLite.ExpireEphemeralTokensIdle.
 const MaxTokenTTL = 365 * 24 * time.Hour
 
 // API exposes /api/me/*. Caller resolution accepts either a session

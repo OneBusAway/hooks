@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -60,10 +62,30 @@ func cmdForward(g globals, args []string) int {
 	}
 	defer cancel()
 
+	// If we're running with a profile-loaded user PAT (no explicit
+	// --token / HOOKS_TOKEN), mint an ephemeral kind='listener' token
+	// scoped to <source> for the SSE handshake. The PAT itself cannot
+	// reach /subscribe/<source>; it can mint a listener token via
+	// /api/me/tokens. We register a deferred revoke so the token does
+	// not survive a normal exit. (Server-side prune handles the
+	// not-so-normal exits on a 24h timer.)
+	subscribeToken := g.Token
+	if !g.TokenExplicit {
+		eph, err := mintEphemeralListener(ctx, g, source)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "forward: mint ephemeral token: %v\n", err)
+			return 1
+		}
+		if eph != nil {
+			subscribeToken = eph.Plaintext
+			defer revokeEphemeralListener(g, eph.ID)
+		}
+	}
+
 	cli := &http.Client{Timeout: *timeout}
 
 	for {
-		if err := streamFromCursor(ctx, g, source, &startCursor, cursorPath, *to, cli, *exitOnError); err != nil {
+		if err := streamFromCursor(ctx, g, subscribeToken, source, &startCursor, cursorPath, *to, cli, *exitOnError); err != nil {
 			if ctx.Err() != nil {
 				return 0
 			}
@@ -85,13 +107,13 @@ func cmdForward(g globals, args []string) int {
 	}
 }
 
-func streamFromCursor(ctx context.Context, g globals, source string, cursor *int64, cursorPath, to string, cli *http.Client, exitOnError bool) error {
+func streamFromCursor(ctx context.Context, g globals, bearer, source string, cursor *int64, cursorPath, to string, cli *http.Client, exitOnError bool) error {
 	endpoint := fmt.Sprintf("%s/subscribe/%s?since=%d", strings.TrimRight(g.Server, "/"), source, *cursor)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+g.Token)
+	req.Header.Set("Authorization", "Bearer "+bearer)
 	req.Header.Set("Accept", "text/event-stream")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -261,4 +283,89 @@ func loadCursor(path string) int64 {
 func saveCursor(path string, seq int64) {
 	_ = os.WriteFile(path, []byte(strconv.FormatInt(seq, 10)+"\n"), 0o600)
 }
+
+// ephemeralListener is the in-memory record of a `kind='listener'`,
+// `ephemeral=true` token minted for the lifetime of one `hooksctl
+// forward` invocation.
+type ephemeralListener struct {
+	ID        string
+	Plaintext string
+}
+
+// mintEphemeralListener calls /api/me/tokens to mint a per-source
+// listener token. Returns (nil, nil) if the caller's PAT cannot reach
+// /api/me (e.g. system bearer that happens to have only listener
+// scope) — in that case forward falls back to using the original
+// token, preserving backwards compatibility for power users who hand-
+// minted a long-lived listener token. Any unexpected status is
+// returned as an error so the caller can abort with a clean message.
+func mintEphemeralListener(ctx context.Context, g globals, source string) (*ephemeralListener, error) {
+	body, _ := json.Marshal(map[string]any{
+		"name":      "hooksctl-forward-" + source,
+		"scopes":    []string{source},
+		"kind":      "listener",
+		"ephemeral": true,
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		strings.TrimRight(g.Server, "/")+"/api/me/tokens", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+g.Token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	switch resp.StatusCode {
+	case http.StatusCreated:
+		var out struct {
+			ID        string `json:"id"`
+			Plaintext string `json:"plaintext"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			return nil, fmt.Errorf("decode: %w", err)
+		}
+		if out.Plaintext == "" || out.ID == "" {
+			return nil, errors.New("server returned empty token")
+		}
+		return &ephemeralListener{ID: out.ID, Plaintext: out.Plaintext}, nil
+	case http.StatusUnauthorized, http.StatusForbidden:
+		// The bearer is not a user PAT (e.g. listener token reaching
+		// here because /api/me rejected it). Fall back to using the
+		// caller-supplied token directly.
+		return nil, nil
+	default:
+		bb, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		return nil, fmt.Errorf("/api/me/tokens: %d %s", resp.StatusCode, bb)
+	}
+}
+
+// revokeEphemeralListener best-effort POSTs the revoke endpoint with
+// a 5s timeout so a slow or unreachable server does not block CLI
+// teardown. Errors are logged to stderr; the plaintext token never
+// appears in any log line.
+func revokeEphemeralListener(g globals, id string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		strings.TrimRight(g.Server, "/")+"/api/me/tokens/"+id+"/revoke", nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "forward: revoke ephemeral token: %v\n", err)
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+g.Token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "forward: revoke ephemeral token: %v\n", err)
+		return
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
+		fmt.Fprintf(os.Stderr, "forward: revoke ephemeral token: status %d\n", resp.StatusCode)
+	}
+}
+
 

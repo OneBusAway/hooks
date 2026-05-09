@@ -23,6 +23,10 @@ Failed verification produces HTTP 401 with no body. Logs include only the source
 
 The special scope `admin` grants access to `/inspector`, `/api/tokens`, and `/api/push-subscriptions`. It does **not** implicitly grant subscribe access — an admin token MUST also include the source name in its scopes to subscribe.
 
+### Ephemeral listener tokens
+
+`hooksctl forward` running against a logged-in profile auto-mints a `kind='listener'` token with `ephemeral=true` for the lifetime of the SSE session and revokes it on clean exit. If the CLI is killed (SIGKILL, OOM, network partition) the token row stays unrevoked locally; the server's hourly prune loop covers that case. **Any `ephemeral=true` listener token whose `last_used_at` is more than 24h in the past — or whose `created_at` is more than 24h in the past with no `last_used_at` recorded — is auto-revoked**. The 24h window is large enough that intentional reconnects are unaffected and short enough that an unattended `hooksctl forward` cannot leave a long-tail credential.
+
 ## Outbound HMAC signing (push delivery)
 
 Every push delivery sets:

@@ -147,13 +147,13 @@ All new and altered tables live in `internal/store/schema.sql` (the canonical sc
 
 ## 12. `hooksctl forward` ephemeral-token integration
 
-- [ ] 12.1 Detect login state at startup: if a profile credentials file exists and `HOOKS_TOKEN` is unset, use the profile token
-- [ ] 12.2 If running with a user PAT (i.e. `/api/me` returns 200 with a user) and no `--token` flag is set, POST `/api/me/tokens` with `kind='listener'`, `scopes=[<source>]`, `ephemeral=true` to mint an ephemeral listener token before opening SSE; store the returned `id` and `plaintext`
-- [ ] 12.3 Use the ephemeral token for the SSE handshake; record token id in memory
-- [ ] 12.4 Trap SIGINT / SIGTERM and on broken-pipe exit: POST `/api/me/tokens/{id}/revoke` with a 5s timeout; ignore errors but log on stderr
-- [ ] 12.5 Skip ephemeral minting when `HOOKS_TOKEN` is explicitly set in the env OR when `--token <id>` is passed (preserve current behavior for CI, system tokens, and power-user long-lived listener tokens)
-- [ ] 12.6 Update existing `cmd/hooksctl/forward_e2e_test.go` to cover three branches: explicit `HOOKS_TOKEN` (no `/api/me/tokens` call), `--token <id>` (no mint, no revoke), and login-aware mode (token created and revoked)
-- [ ] 12.7 Server-side: extend the prune loop to revoke `ephemeral=true` tokens whose `last_used_at` is more than 24h in the past (or whose `created_at` is more than 24h in the past if never used), regardless of owner. Document the "unused for 24h" semantics in `docs/security.md`.
+- [x] 12.1 Detect login state at startup: if a profile credentials file exists and `HOOKS_TOKEN` is unset, use the profile token
+- [x] 12.2 If running with a user PAT (i.e. `/api/me` returns 200 with a user) and no `--token` flag is set, POST `/api/me/tokens` with `kind='listener'`, `scopes=[<source>]`, `ephemeral=true` to mint an ephemeral listener token before opening SSE; store the returned `id` and `plaintext`
+- [x] 12.3 Use the ephemeral token for the SSE handshake; record token id in memory
+- [x] 12.4 Trap SIGINT / SIGTERM and on broken-pipe exit: POST `/api/me/tokens/{id}/revoke` with a 5s timeout; ignore errors but log on stderr
+- [x] 12.5 Skip ephemeral minting when `HOOKS_TOKEN` is explicitly set in the env OR when `--token <id>` is passed (preserve current behavior for CI, system tokens, and power-user long-lived listener tokens)
+- [x] 12.6 Update existing `cmd/hooksctl/forward_e2e_test.go` to cover three branches: explicit `HOOKS_TOKEN` (no `/api/me/tokens` call), `--token <id>` (no mint, no revoke), and login-aware mode (token created and revoked)
+- [x] 12.7 Server-side: extend the prune loop to revoke `ephemeral=true` tokens whose `last_used_at` is more than 24h in the past (or whose `created_at` is more than 24h in the past if never used), regardless of owner. Document the "unused for 24h" semantics in `docs/security.md`.
 
 ## 13. `hooks init` bootstrap-URL output
 

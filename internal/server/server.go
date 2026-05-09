@@ -97,6 +97,7 @@ func Build(cfg *config.Config, registry *sources.Registry, logger *slog.Logger) 
 	bearerAuth := tokens.New(st.Tokens())
 	pmgr := push.New(st.Events(), st.PushSubscriptions(), notifier, logger)
 	pruner := prune.New(st, retentions, logger)
+	pruner.Tokens = st
 
 	auditRec := audit.New(st.Audit(), logger)
 

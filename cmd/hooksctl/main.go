@@ -65,6 +65,12 @@ type globals struct {
 	Token   string
 	JSON    bool
 	Profile string
+
+	// TokenExplicit is true when Token came from --token or HOOKS_TOKEN
+	// rather than the credentials profile. `hooksctl forward` uses this
+	// to decide whether to auto-mint an ephemeral listener token (only
+	// when Token came from the profile, i.e. a user PAT).
+	TokenExplicit bool
 }
 
 func main() { os.Exit(run(os.Args[1:])) }
@@ -81,6 +87,9 @@ func run(args []string) int {
 	g := globals{
 		Server: env("HOOKS_SERVER", defaultServerURL),
 		Token:  os.Getenv("HOOKS_TOKEN"),
+	}
+	if g.Token != "" {
+		g.TokenExplicit = true
 	}
 	rest = splitGlobalFlags(rest, &g)
 
@@ -130,6 +139,7 @@ func splitGlobalFlags(args []string, g *globals) []string {
 			i++
 			if i < len(args) {
 				g.Token = args[i]
+				g.TokenExplicit = true
 			}
 		case "--profile":
 			i++
@@ -143,6 +153,7 @@ func splitGlobalFlags(args []string, g *globals) []string {
 				g.Server = v
 			} else if v, ok := strings.CutPrefix(a, "--token="); ok {
 				g.Token = v
+				g.TokenExplicit = true
 			} else if v, ok := strings.CutPrefix(a, "--profile="); ok {
 				g.Profile = v
 			} else {

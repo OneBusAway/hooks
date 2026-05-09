@@ -97,6 +97,82 @@ func TestPruneOlderThan(t *testing.T) {
 	}
 }
 
+// TestRunOnce_EphemeralTokenIdleSweep covers tasks.md §12.7. The
+// pruner is configured with the SQLite store as its TokenStore. An
+// ephemeral token whose last_used_at was over 24h ago is revoked; an
+// ephemeral token that was used recently survives; a non-ephemeral
+// token is never touched.
+func TestRunOnce_EphemeralTokenIdleSweep(t *testing.T) {
+	st := newStore(t)
+
+	now := time.Now().UTC()
+
+	mustInsert := func(t *testing.T, tok store.Token) {
+		t.Helper()
+		if err := st.Insert(context.Background(), tok); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Idle ephemeral — created 48h ago, last used 30h ago. Should be
+	// revoked.
+	idleLast := now.Add(-30 * time.Hour)
+	mustInsert(t, store.Token{
+		ID: "idle-ephemeral", Name: "idle", Scopes: []string{"render"},
+		SecretHash: "x", CreatedAt: now.Add(-48 * time.Hour),
+		LastUsedAt: &idleLast,
+		Kind:       store.TokenKindListener, Ephemeral: true,
+	})
+
+	// Fresh ephemeral — used within the last hour. Should survive.
+	freshLast := now.Add(-time.Hour)
+	mustInsert(t, store.Token{
+		ID: "fresh-ephemeral", Name: "fresh", Scopes: []string{"render"},
+		SecretHash: "x", CreatedAt: now.Add(-2 * time.Hour),
+		LastUsedAt: &freshLast,
+		Kind:       store.TokenKindListener, Ephemeral: true,
+	})
+
+	// Never-used ephemeral, created 25h ago. Should be revoked
+	// (last_used_at IS NULL, created_at < cutoff).
+	mustInsert(t, store.Token{
+		ID: "never-used-old-ephemeral", Name: "old", Scopes: []string{"render"},
+		SecretHash: "x", CreatedAt: now.Add(-25 * time.Hour),
+		Kind: store.TokenKindListener, Ephemeral: true,
+	})
+
+	// Non-ephemeral, idle for ages. Must NOT be revoked.
+	mustInsert(t, store.Token{
+		ID: "long-lived", Name: "long", Scopes: []string{"render"},
+		SecretHash: "x", CreatedAt: now.Add(-90 * 24 * time.Hour),
+		LastUsedAt: &idleLast,
+		Kind:       store.TokenKindListener, Ephemeral: false,
+	})
+
+	p := New(st, map[string]time.Duration{}, slog.New(slog.DiscardHandler))
+	p.Tokens = st
+	p.Now = func() time.Time { return now }
+	p.RunOnce(context.Background())
+
+	// Inspect each row. We pull all (incl revoked) by leaning on the
+	// admin-shape ListSystemTokens — these tokens have nil owner.
+	check := func(t *testing.T, id string, wantRevoked bool) {
+		t.Helper()
+		tok, err := st.GetToken(context.Background(), id)
+		if err != nil {
+			t.Fatalf("get %s: %v", id, err)
+		}
+		got := tok.RevokedAt != nil
+		if got != wantRevoked {
+			t.Errorf("token %s revoked=%v want %v", id, got, wantRevoked)
+		}
+	}
+	check(t, "idle-ephemeral", true)
+	check(t, "fresh-ephemeral", false)
+	check(t, "never-used-old-ephemeral", true)
+	check(t, "long-lived", false)
+}
+
 func TestRunBlocksUntilCancel(t *testing.T) {
 	st := newStore(t)
 	p := New(st, map[string]time.Duration{}, slog.New(slog.DiscardHandler))

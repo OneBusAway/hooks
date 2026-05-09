@@ -13,10 +13,24 @@ import (
 // Defaults documented in design.md.
 const DefaultInterval = time.Hour
 
+// EphemeralTokenIdle is the inactivity window after which an
+// ephemeral=true listener token is auto-revoked. Documented in
+// `docs/security.md` as the 24h window described by add-developer-
+// accounts §12.7.
+const EphemeralTokenIdle = 24 * time.Hour
+
+// EphemeralTokenExpirer is the slice of TokenStore the pruner needs.
+// Implemented by *store.SQLite. Modeled as a tiny interface so the
+// prune package does not depend on the full TokenStore surface.
+type EphemeralTokenExpirer interface {
+	ExpireEphemeralTokensIdle(ctx context.Context, when time.Time, idleCutoff time.Time) (int64, error)
+}
+
 // Pruner is one process-wide goroutine that periodically removes expired
 // events per source.
 type Pruner struct {
 	Store      store.EventStore
+	Tokens     EphemeralTokenExpirer
 	Now        func() time.Time
 	Interval   time.Duration
 	Retentions map[string]time.Duration // source -> retention; 0 means "no auto-prune"
@@ -57,7 +71,8 @@ func (p *Pruner) Run(ctx context.Context) {
 	}
 }
 
-// RunOnce executes a single per-source prune pass.
+// RunOnce executes a single per-source prune pass plus the ephemeral
+// token sweep when a token expirer was wired in.
 func (p *Pruner) RunOnce(ctx context.Context) {
 	for source, retention := range p.Retentions {
 		if retention <= 0 {
@@ -77,6 +92,21 @@ func (p *Pruner) RunOnce(ctx context.Context) {
 				slog.String("source", source),
 				slog.Int64("rows", n),
 				slog.Duration("retention", retention),
+			)
+		}
+	}
+	if p.Tokens != nil {
+		now := p.Now().UTC()
+		idleCutoff := now.Add(-EphemeralTokenIdle)
+		n, err := p.Tokens.ExpireEphemeralTokensIdle(ctx, now, idleCutoff)
+		if err != nil {
+			p.Logger.Error("prune: ephemeral token sweep failed",
+				slog.String("error", err.Error()),
+			)
+		} else if n > 0 {
+			p.Logger.Info("prune: revoked ephemeral tokens",
+				slog.Int64("rows", n),
+				slog.Duration("idle", EphemeralTokenIdle),
 			)
 		}
 	}
