@@ -481,9 +481,13 @@ func TestImageInitFailsClearlyOn0o755HostDir(t *testing.T) {
 		imageTag, "init",
 	).CombinedOutput()
 	if runErr == nil {
-		t.Fatalf("expected `hooks init` to fail on a 0o755 host dir, but it succeeded:\n%s", out)
+		// Init succeeded → admin-token line was printed; never echo `out`.
+		t.Fatal("expected `hooks init` to fail on a 0o755 host dir, but it succeeded (output redacted: contains one-time admin token)")
 	}
 	if !bytes.Contains(bytes.ToLower(out), []byte("permission denied")) {
+		// init returned non-zero, so by cmd/hooks/main.go's order it didn't
+		// reach the admin-token print site — `out` is safe to surface and
+		// the diagnostic value is high (tells you what error did fire).
 		t.Fatalf("expected permission-denied error in init output, got:\n%s", out)
 	}
 }
