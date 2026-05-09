@@ -182,7 +182,9 @@ func (m *Manager) DeleteSession(ctx context.Context, cookieValue string) (string
 
 // SetCookies writes the hooks_session and hooks_csrf cookies onto w.
 // SetCookies is shared between login and the CSRF cookie rotation that
-// happens on session creation.
+// happens on session creation: every call generates a fresh hooks_csrf
+// value via secret.NewRandom, so a prior session's CSRF token cannot
+// authenticate a freshly created session (task 4.3).
 func (m *Manager) SetCookies(w http.ResponseWriter, r *http.Request, cookieValue string) (csrfToken string, err error) {
 	csrf, err := secret.NewRandom()
 	if err != nil {

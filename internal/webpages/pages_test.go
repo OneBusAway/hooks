@@ -176,6 +176,39 @@ func TestLoginPOST_HappyPath_RedirectsAndSetsSessionCookie(t *testing.T) {
 	}
 }
 
+// TestLoginPOST_RotatesPostSessionCSRFCookieAcrossLogins asserts task 4.3:
+// the post-session hooks_csrf cookie value is regenerated on every
+// successful login. Two logins from the same client (cookie jar carries
+// any prior hooks_csrf forward) must produce two distinct cookie values
+// so a stale hooks_csrf token cannot be replayed.
+func TestLoginPOST_RotatesPostSessionCSRFCookieAcrossLogins(t *testing.T) {
+	f := newFixture(t)
+	f.addUser(t, "alice@example.com", "supercalifragilistic", store.RoleUser)
+
+	doLogin := func() string {
+		csrf := f.primeCSRF(t, "/login")
+		form := url.Values{}
+		form.Set("email", "alice@example.com")
+		form.Set("password", "supercalifragilistic")
+		form.Set("csrf_token", csrf)
+		resp, _ := f.postForm(t, "/login", form)
+		if resp.StatusCode != http.StatusSeeOther {
+			t.Fatalf("status: %d", resp.StatusCode)
+		}
+		v := cookieValue(resp, auth.CSRFCookie)
+		if v == "" {
+			t.Fatal("hooks_csrf cookie not set after login")
+		}
+		return v
+	}
+
+	first := doLogin()
+	second := doLogin()
+	if first == second {
+		t.Errorf("hooks_csrf cookie was not rotated across logins: %q == %q", first, second)
+	}
+}
+
 func TestLoginPOST_BadCredentials_RendersError(t *testing.T) {
 	f := newFixture(t)
 	f.addUser(t, "alice@example.com", "supercalifragilistic", store.RoleUser)

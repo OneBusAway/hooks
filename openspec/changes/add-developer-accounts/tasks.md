@@ -57,7 +57,7 @@ All new and altered tables live in `internal/store/schema.sql` (the canonical sc
 
 - [x] 4.1 Implement `internal/web/csrf.go` middleware that, for any cookie-authenticated mutation: (a) requires `Origin` (or `Referer` fallback) to match the request host; (b) rejects `Origin: null`; (c) reads `hooks_csrf` cookie and the form/JSON `csrf_token` field and constant-time compares them. Bearer-only requests (no `hooks_session` cookie) are exempt.
 - [x] 4.2 Apply CSRF middleware to: `/api/auth/login`, `/api/auth/logout`, `/api/auth/signup`, `/api/auth/device/approve`, `/api/auth/device/deny`, all `/api/me/*` mutations, all `/api/users/*` mutations, all `/api/invites/*` mutations, all admin `/api/tokens` mutations, all admin `/api/push-subscriptions` mutations (admin /api/tokens and /api/push-subscriptions mutations remain bearer-only in v1; CSRF middleware is a no-op for bearer-only requests)
-- [ ] 4.3 Server-rendered inspector forms: include a hidden `csrf_token` field whose value matches the `hooks_csrf` cookie; rotate the CSRF cookie value on session creation/login
+- [x] 4.3 Server-rendered inspector forms: include a hidden `csrf_token` field whose value matches the `hooks_csrf` cookie; rotate the CSRF cookie value on session creation/login
 - [x] 4.4 Tests: missing `Origin` returns 403; mismatched `Origin` returns 403; `Origin: null` returns 403; missing CSRF cookie returns 403; mismatched CSRF token returns 403; valid Origin + matching CSRF token + cookie session passes; bearer-only PAT calls bypass CSRF entirely; legacy bearer-in-cookie path bypasses CSRF (since the cookie *is* the bearer in that path)
 
 ## 5. Rate limiting

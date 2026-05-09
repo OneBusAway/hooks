@@ -104,6 +104,79 @@ func TestLogin_HappyPath_SetsCookieAndRow(t *testing.T) {
 	}
 }
 
+// TestLogin_RotatesCSRFCookieOnEachLogin asserts that each successful
+// login emits a fresh hooks_csrf cookie value, even when the same client
+// repeats the login. Task 4.3 requires "rotate the CSRF cookie value on
+// session creation/login" so a stale CSRF token from a prior session
+// cannot be replayed against a freshly created session.
+func TestLogin_RotatesCSRFCookieOnEachLogin(t *testing.T) {
+	m, _, _ := newManagerWithUser(t, "alice@example.com", "supercalifragilistic", store.RoleUser, false)
+	api := NewAPI(m)
+	mux := http.NewServeMux()
+	api.Register(mux)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	doLogin := func() string {
+		body, _ := json.Marshal(loginRequest{Email: "alice@example.com", Password: "supercalifragilistic"})
+		resp, err := http.Post(srv.URL+"/api/auth/login", "application/json", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status: %d", resp.StatusCode)
+		}
+		for _, c := range resp.Cookies() {
+			if c.Name == CSRFCookie {
+				return c.Value
+			}
+		}
+		t.Fatal("missing hooks_csrf cookie")
+		return ""
+	}
+
+	first := doLogin()
+	second := doLogin()
+	if first == "" || second == "" {
+		t.Fatal("empty CSRF cookie value(s)")
+	}
+	if first == second {
+		t.Errorf("CSRF cookie was not rotated across logins: %q == %q", first, second)
+	}
+}
+
+// TestSetCookies_RotatesCSRFOnEveryCall is the unit-level check behind
+// TestLogin_RotatesCSRFCookieOnEachLogin: SetCookies is the single
+// rotation point shared by every code path that creates or reissues a
+// session (JSON /api/auth/login and the server-rendered /login form).
+func TestSetCookies_RotatesCSRFOnEveryCall(t *testing.T) {
+	m, _, u := newManagerWithUser(t, "alice@example.com", "supercalifragilistic", store.RoleUser, false)
+	cookieValue, _, err := m.CreateSession(context.Background(), u.ID, "test", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+
+	rec1 := httptest.NewRecorder()
+	first, err := m.SetCookies(rec1, req, cookieValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec2 := httptest.NewRecorder()
+	second, err := m.SetCookies(rec2, req, cookieValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == "" || second == "" {
+		t.Fatal("empty CSRF token(s) returned")
+	}
+	if first == second {
+		t.Errorf("SetCookies did not rotate CSRF: %q == %q", first, second)
+	}
+}
+
 func TestLogin_BadPassword_GenericError(t *testing.T) {
 	m, _, _ := newManagerWithUser(t, "alice@example.com", "supercalifragilistic", store.RoleUser, false)
 	api := NewAPI(m)
