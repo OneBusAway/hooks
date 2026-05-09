@@ -1,5 +1,6 @@
-// Package store defines the storage interfaces (events, listener tokens, push
-// subscriptions) and provides the default SQLite implementation.
+// Package store defines the storage interfaces (events, listener tokens,
+// push subscriptions, users, sessions, invites, device pairings, audit
+// events) and provides the default SQLite implementation.
 //
 // The interfaces are deliberately minimal so a Postgres-backed implementation
 // can land later without rippling through the rest of the codebase.
@@ -25,6 +26,11 @@ var ErrNotFound = errors.New("store: not found")
 // authorizes /subscribe/<source>; making the empty case loud forces
 // callers to make the privilege choice explicit.
 var ErrTokenKindRequired = errors.New("store: token kind required (use TokenKindPAT or TokenKindListener)")
+
+// ErrEmailInUse is returned by SignupTx when the user-insert collides
+// with the case-insensitive unique index on users.email. Callers
+// translate this to HTTP 409.
+var ErrEmailInUse = errors.New("store: email already in use")
 
 // Event is one captured webhook delivery.
 type Event struct {

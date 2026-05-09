@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebusaway/hooks/internal/audit"
 	"github.com/onebusaway/hooks/internal/secret"
 	"github.com/onebusaway/hooks/internal/store"
 	"github.com/onebusaway/hooks/internal/users"
@@ -33,7 +34,7 @@ func newTest(t *testing.T) (*store.SQLite, *API) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	api := NewAPI(s.Invites(), s.Users(), s.Audit(), nil)
+	api := NewAPI(s.Invites(), s.Users(), audit.New(s.Audit(), nil), nil)
 	return s, api
 }
 
@@ -195,6 +196,177 @@ func TestSignup_BadPassword_400(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status: %d", resp.StatusCode)
+	}
+}
+
+// TestSignup_RetiresBootstrapInvite covers §16.6(a): a successful signup
+// using a NON-bootstrap invite still sweeps any bootstrap=true invite
+// in the same tx (MarkBootstrapInvitesConsumed).
+func TestSignup_RetiresBootstrapInvite(t *testing.T) {
+	s, api := newTest(t)
+	mux := http.NewServeMux()
+	api.Register(mux)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	now := time.Now().UTC()
+	bootstrapExp := now.Add(24 * time.Hour)
+	if err := s.InsertInvite(context.Background(), store.Invite{
+		Code: "BOOTSTRAPCODE000A", Role: store.RoleAdmin,
+		Bootstrap: true, CreatedAt: now, ExpiresAt: &bootstrapExp,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	regExp := now.Add(time.Hour)
+	if err := s.InsertInvite(context.Background(), store.Invite{
+		Code: "REGULARINV000001A", Role: store.RoleUser,
+		DefaultScopes: []string{"render"},
+		CreatedAt:     now, ExpiresAt: &regExp,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(signupRequest{
+		Code: "REGULARINV000001A", Email: "alice@example.com",
+		Name: "Alice", Password: "supercalifragilistic",
+	})
+	resp, err := http.Post(srv.URL+"/api/auth/signup", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("signup: %d", resp.StatusCode)
+	}
+
+	bs, err := s.GetInviteByCode(context.Background(), "BOOTSTRAPCODE000A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bs.ConsumedAt == nil {
+		t.Error("bootstrap invite was not retired by an unrelated signup")
+	}
+}
+
+// TestSignup_ConsumedBootstrap_409 covers §16.6(b): once the bootstrap
+// invite is consumed, a signup attempt using that code returns 409.
+func TestSignup_ConsumedBootstrap_409(t *testing.T) {
+	s, api := newTest(t)
+	mux := http.NewServeMux()
+	api.Register(mux)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	now := time.Now().UTC()
+	consumed := now.Add(-time.Minute)
+	bootstrapExp := now.Add(24 * time.Hour)
+	priorUserID := uuid.NewString()
+	hash, _ := users.HashPassword(secret.String("supercalifragilistic"))
+	if err := s.InsertUser(context.Background(), store.User{
+		ID: priorUserID, Email: "first@example.com", Name: "First",
+		Role: store.RoleAdmin, PasswordHash: hash, DefaultScopes: []string{},
+		CreatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.InsertInvite(context.Background(), store.Invite{
+		Code: "BOOTSTRAPCODE0009", Role: store.RoleAdmin,
+		Bootstrap: true, CreatedAt: now, ExpiresAt: &bootstrapExp,
+		ConsumedAt: &consumed, ConsumedByUserID: &priorUserID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(signupRequest{
+		Code: "BOOTSTRAPCODE0009", Email: "second@example.com",
+		Name: "Second", Password: "supercalifragilistic",
+	})
+	resp, err := http.Post(srv.URL+"/api/auth/signup", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status: %d (want 409)", resp.StatusCode)
+	}
+}
+
+// TestSignup_ExpiredBootstrap_410 covers §16.6(c): an expired bootstrap
+// invite returns 410.
+func TestSignup_ExpiredBootstrap_410(t *testing.T) {
+	s, api := newTest(t)
+	mux := http.NewServeMux()
+	api.Register(mux)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	now := time.Now().UTC()
+	past := now.Add(-time.Hour)
+	if err := s.InsertInvite(context.Background(), store.Invite{
+		Code: "BOOTSTRAPEXPIRED1", Role: store.RoleAdmin,
+		Bootstrap: true, CreatedAt: now.Add(-25 * time.Hour), ExpiresAt: &past,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(signupRequest{
+		Code: "BOOTSTRAPEXPIRED1", Email: "alice@example.com",
+		Name: "Alice", Password: "supercalifragilistic",
+	})
+	resp, err := http.Post(srv.URL+"/api/auth/signup", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusGone {
+		t.Fatalf("status: %d (want 410)", resp.StatusCode)
+	}
+}
+
+// TestSignup_AdminInviteStoresDefaultScopes covers §16.6(d): an
+// admin-role invite stores default_scopes (forwarded as a future-
+// reserved field) but the auth path does not gate on them — admins
+// implicitly hold all scopes.
+func TestSignup_AdminInviteStoresDefaultScopes(t *testing.T) {
+	s, api := newTest(t)
+	mux := http.NewServeMux()
+	api.Register(mux)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	now := time.Now().UTC()
+	exp := now.Add(time.Hour)
+	if err := s.InsertInvite(context.Background(), store.Invite{
+		Code: "ADMININVITE00001A", Role: store.RoleAdmin,
+		DefaultScopes: []string{"render", "stripe"},
+		CreatedAt:     now, ExpiresAt: &exp,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(signupRequest{
+		Code: "ADMININVITE00001A", Email: "admin2@example.com",
+		Name: "Admin Two", Password: "supercalifragilistic",
+	})
+	resp, err := http.Post(srv.URL+"/api/auth/signup", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status: %d", resp.StatusCode)
+	}
+
+	u, err := s.GetUserByEmail(context.Background(), "admin2@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Role != store.RoleAdmin {
+		t.Errorf("role: %s (want admin)", u.Role)
+	}
+	if len(u.DefaultScopes) != 2 {
+		t.Errorf("default_scopes copied from invite: %v", u.DefaultScopes)
 	}
 }
 

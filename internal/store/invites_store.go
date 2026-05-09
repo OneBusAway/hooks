@@ -5,10 +5,40 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
+
+	sqlite "modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 
 	"github.com/onebusaway/hooks/internal/store/sqlcgen"
 )
+
+// isUniqueEmailViolation reports whether err is the modernc.org/sqlite
+// constraint-violation that fires when an INSERT into users races the
+// idx_users_email_nocase unique index. The typed-error path matches
+// SQLITE_CONSTRAINT_UNIQUE specifically — a primary-key collision on
+// users.id surfaces as SQLITE_CONSTRAINT_PRIMARYKEY and is intentionally
+// NOT classified as "email in use" (a UUID collision is an internal-
+// state surprise, not a user-facing 409). The message-substring fallback
+// at the bottom protects against driver upgrades that wrap the typed
+// error or change its code; it still gates on "users.email" /
+// idx_users_email_nocase so unrelated UNIQUE failures (e.g. a future
+// constraint on another table) are not misclassified.
+func isUniqueEmailViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	var se *sqlite.Error
+	if errors.As(err, &se) && se.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE {
+		msg := strings.ToLower(se.Error())
+		if strings.Contains(msg, "users.email") || strings.Contains(msg, "idx_users_email_nocase") {
+			return true
+		}
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "users.email") || strings.Contains(msg, "idx_users_email_nocase")
+}
 
 func inviteFromGen(r sqlcgen.Invite) (Invite, error) {
 	inv := Invite{
@@ -206,10 +236,12 @@ func (s *SQLite) EnsureBootstrapInvite(ctx context.Context, codeFn func() string
 }
 
 // SignupTx is the atomic invite-consume + user-insert flow described in
-// design.md. It marks the invite consumed (returning ErrInviteConsumed if
-// already consumed), inserts the user, and (when applicable) marks any
-// bootstrap invite consumed in the same tx. Roll back on user-insert
-// failure leaves the invite unconsumed.
+// design.md. In a single transaction it: inserts the user (returning
+// ErrEmailInUse on a unique-email collision), marks the invite consumed
+// (returning ErrInviteConsumed if already consumed), and sweeps any
+// bootstrap invite the same user retires implicitly. Any failure rolls
+// the entire tx back, so a duplicate email or stale invite leaves no
+// half-applied state.
 func (s *SQLite) SignupTx(ctx context.Context, code string, u User, now time.Time) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -241,6 +273,9 @@ func (s *SQLite) SignupTx(ctx context.Context, code string, u User, now time.Tim
 		DeactivatedAt: nullInt64FromTime(u.DeactivatedAt),
 		ExternalID:    nullStringPtr(u.ExternalID),
 	}); err != nil {
+		if isUniqueEmailViolation(err) {
+			return ErrEmailInUse
+		}
 		return err
 	}
 

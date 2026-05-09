@@ -9,7 +9,7 @@ import (
 )
 
 // ContextKey is the typed key under which Authenticate-derived state is
-// stashed on a request's context. Use Manager.From(ctx) to read it.
+// stashed on a request's context. Use Manager.FromContext(ctx) to read it.
 type ContextKey struct{ name string }
 
 var sessionContextKey = ContextKey{name: "session"}

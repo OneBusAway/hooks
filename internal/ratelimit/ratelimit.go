@@ -7,6 +7,8 @@
 package ratelimit
 
 import (
+	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"strconv"
@@ -29,15 +31,45 @@ func (l Limit) String() string {
 // KeyByIP (best-effort RemoteAddr) and KeyByUser (auth-attached user).
 type KeyFunc func(r *http.Request) string
 
-// KeyByIP keys buckets by the request's client IP. Strips :port. Returns
-// an empty string for malformed RemoteAddr (which causes the request to
-// bypass — there is no "anonymous" rate-limit class today).
+// KeyByIP keys buckets by the request's client IP. SplitHostPort handles
+// bracketed IPv6 (`[::1]:1234`); when RemoteAddr lacks a port we fall back
+// to the raw string. The empty string is reserved for "no key" (the
+// middleware skips rate-limit accounting in that case).
 func KeyByIP(r *http.Request) string {
+	if r == nil || r.RemoteAddr == "" {
+		return ""
+	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
 	}
 	return host
+}
+
+// userIDKey is the request-context key produced by KeyByUser. Auth
+// middleware that wants to be subject to per-user rate limiting must
+// attach the calling user's id under this key before reaching the
+// limiter middleware.
+type userIDKey struct{}
+
+// WithUserKey returns ctx tagged with userID for KeyByUser to read.
+// Auth middleware calls this once it has resolved the request to a user.
+func WithUserKey(ctx context.Context, userID string) context.Context {
+	if userID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, userIDKey{}, userID)
+}
+
+// KeyByUser returns the authenticated user-id attached via WithUserKey.
+// An empty return means "no user attached" — the middleware then skips
+// accounting, matching the KeyByIP-on-malformed-RemoteAddr semantics.
+func KeyByUser(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	id, _ := r.Context().Value(userIDKey{}).(string)
+	return id
 }
 
 // Limiter is a single-key token-bucket rate limiter. It is concurrency
@@ -50,7 +82,18 @@ type Limiter struct {
 }
 
 // New returns a Limiter that enforces every Limit in limits per key.
+// Panics if any limit has Per <= 0 (would divide by zero in Allow) or
+// Burst <= 0 (would refuse every request forever). The fail-fast on
+// construction surfaces misuse at server boot rather than at first 429.
 func New(limits ...Limit) *Limiter {
+	for i, lim := range limits {
+		if lim.Per <= 0 {
+			panic(fmt.Sprintf("ratelimit.New: limits[%d].Per must be > 0, got %v", i, lim.Per))
+		}
+		if lim.Burst <= 0 {
+			panic(fmt.Sprintf("ratelimit.New: limits[%d].Burst must be > 0, got %d", i, lim.Burst))
+		}
+	}
 	return &Limiter{
 		limits: limits,
 		now:    time.Now,

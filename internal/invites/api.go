@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebusaway/hooks/internal/audit"
 	"github.com/onebusaway/hooks/internal/secret"
 	"github.com/onebusaway/hooks/internal/store"
 	"github.com/onebusaway/hooks/internal/users"
@@ -30,17 +32,18 @@ type AdminContextProvider interface {
 type API struct {
 	Invites store.InviteStore
 	Users   store.UserStore
-	Audit   store.AuditStore
+	Audit   audit.Recorder
 	Auth    AdminContextProvider
+	Logger  *slog.Logger
 	Now     func() time.Time
 }
 
 // NewAPI constructs an API.
-func NewAPI(inv store.InviteStore, u store.UserStore, a store.AuditStore, auth AdminContextProvider) *API {
+func NewAPI(inv store.InviteStore, u store.UserStore, rec audit.Recorder, auth AdminContextProvider) *API {
 	return &API{
 		Invites: inv,
 		Users:   u,
-		Audit:   a,
+		Audit:   rec,
 		Auth:    auth,
 		Now:     time.Now,
 	}
@@ -93,6 +96,7 @@ func (a *API) create(w http.ResponseWriter, r *http.Request) {
 	}
 	code, err := NewCode()
 	if err != nil {
+		a.warn(r.Context(), "invites: NewCode failed", slog.Any("err", err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 		return
 	}
@@ -108,6 +112,7 @@ func (a *API) create(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt:       &exp,
 	}
 	if err := a.Invites.Insert(r.Context(), inv); err != nil {
+		a.warn(r.Context(), "invites: insert failed", slog.Any("err", err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 		return
 	}
@@ -132,6 +137,7 @@ func (a *API) list(w http.ResponseWriter, r *http.Request) {
 		rows, err = a.Invites.List(r.Context())
 	}
 	if err != nil {
+		a.warn(r.Context(), "invites: list failed", slog.Any("err", err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 		return
 	}
@@ -154,6 +160,7 @@ func (a *API) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		a.warn(r.Context(), "invites: get-by-code failed", slog.Any("err", err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 		return
 	}
@@ -162,6 +169,7 @@ func (a *API) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.Invites.Delete(r.Context(), code); err != nil {
+		a.warn(r.Context(), "invites: delete failed", slog.Any("err", err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 		return
 	}
@@ -203,6 +211,7 @@ func (a *API) signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		a.warn(r.Context(), "invites: signup get-by-code failed", slog.Any("err", err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 		return
 	}
@@ -224,6 +233,7 @@ func (a *API) signup(w http.ResponseWriter, r *http.Request) {
 
 	hash, err := users.HashPassword(secret.String(req.Password))
 	if err != nil {
+		a.warn(r.Context(), "invites: signup hash failed", slog.Any("err", err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 		return
 	}
@@ -237,33 +247,26 @@ func (a *API) signup(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:     now,
 	}
 
-	// Type-assert the invite store down to the *SQLite to invoke the tx
-	// flow; for tests using an in-memory store we still call the same
-	// signup-tx method via a runtime check.
+	// Prefer the *SQLite atomic SignupTx when available; otherwise fall
+	// back to a best-effort sequence (in-memory test stores).
 	type signupTxer interface {
 		SignupTx(ctx context.Context, code string, u store.User, now time.Time) error
 	}
-	if tx, ok := a.Invites.(interface {
-		SignupTx(ctx context.Context, code string, u store.User, now time.Time) error
-	}); ok {
-		_ = tx
-	}
-	// Direct approach: call via the underlying *SQLite by traversing the
-	// adapter. Callers that supply a non-SQLite InviteStore will not see
-	// the atomic guarantee but the API contract is still correct.
 	if tx, ok := a.Invites.(signupTxer); ok {
 		if err := tx.SignupTx(r.Context(), req.Code, u, now); err != nil {
-			a.handleSignupErr(w, err)
+			a.handleSignupErr(r.Context(), w, err)
 			return
 		}
 	} else {
 		// Fallback: best-effort sequence. Not safe under concurrent signup
 		// races, but used only by tests with a mock store.
 		if err := a.Users.Insert(r.Context(), u); err != nil {
+			a.warn(r.Context(), "invites: signup user insert failed", slog.Any("err", err))
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 			return
 		}
 		if err := a.Invites.MarkConsumed(r.Context(), req.Code, u.ID, now); err != nil {
+			a.warn(r.Context(), "invites: signup mark-consumed failed", slog.Any("err", err))
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 			return
 		}
@@ -279,15 +282,16 @@ func (a *API) signup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, signupResponse{UserID: u.ID, Email: u.Email, Role: string(u.Role)})
 }
 
-func (a *API) handleSignupErr(w http.ResponseWriter, err error) {
+func (a *API) handleSignupErr(ctx context.Context, w http.ResponseWriter, err error) {
 	if errors.Is(err, store.ErrInviteConsumed) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "invite already consumed"})
 		return
 	}
-	if strings.Contains(err.Error(), "UNIQUE") || strings.Contains(err.Error(), "unique") {
+	if errors.Is(err, store.ErrEmailInUse) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "email already in use"})
 		return
 	}
+	a.warn(ctx, "invites: signup tx failed", slog.Any("err", err))
 	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 }
 
@@ -325,15 +329,20 @@ func (a *API) recordAudit(ctx context.Context, actor *string, action, targetType
 	if a.Audit == nil {
 		return
 	}
-	_ = a.Audit.Insert(ctx, store.AuditEvent{
-		ID:          uuid.NewString(),
-		At:          a.Now().UTC(),
+	a.Audit.Record(ctx, store.AuditEvent{
 		ActorUserID: actor,
 		Action:      action,
 		TargetType:  targetType,
 		TargetID:    targetID,
 		Metadata:    meta,
 	})
+}
+
+func (a *API) warn(ctx context.Context, msg string, attrs ...slog.Attr) {
+	if a.Logger == nil {
+		return
+	}
+	a.Logger.LogAttrs(ctx, slog.LevelWarn, msg, attrs...)
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

@@ -53,6 +53,13 @@ type API struct {
 	// existing pattern in audit.SQLRecorder. Tests inject a buffer-backed
 	// logger to assert observable behavior.
 	Logger *slog.Logger
+
+	// OnMarkFetched, when non-nil, is invoked from the deferred goroutine
+	// after the post-poll MarkFetched call completes (with whatever error
+	// the call returned). Tests use this to synchronize on the
+	// approved_unfetched → done transition without sleep-and-pray; in
+	// production it is nil and the goroutine returns silently.
+	OnMarkFetched func(deviceCode string, err error)
 }
 
 // NewAPI constructs an API.
@@ -118,11 +125,13 @@ func (a *API) start(w http.ResponseWriter, r *http.Request) {
 
 	deviceCode, err := NewDeviceCode()
 	if err != nil {
+		a.warn(r.Context(), "device-pairing start: NewDeviceCode failed", slog.Any("err", err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 		return
 	}
 	userCode, err := NewUserCode()
 	if err != nil {
+		a.warn(r.Context(), "device-pairing start: NewUserCode failed", slog.Any("err", err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 		return
 	}
@@ -138,6 +147,7 @@ func (a *API) start(w http.ResponseWriter, r *http.Request) {
 		RequestedScopes:     req.Scopes,
 	}
 	if err := a.Pairings.Insert(r.Context(), dp); err != nil {
+		a.warn(r.Context(), "device-pairing start: insert failed", slog.Any("err", err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 		return
 	}
@@ -177,6 +187,7 @@ func (a *API) poll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		a.warn(r.Context(), "device-pairing poll: lookup failed", slog.Any("err", err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 		return
 	}
@@ -198,11 +209,16 @@ func (a *API) poll(w http.ResponseWriter, r *http.Request) {
 		return
 	case store.DevicePairingStatusApprovedUnfetched:
 		if dp.PlaintextToken == nil || dp.TokenID == nil {
+			a.warn(r.Context(), "device-pairing poll: approved row missing token",
+				slog.String("device_code_prefix", devicePrefix(dp.DeviceCode)))
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "approved row missing token"})
 			return
 		}
 		tok, err := a.Server.GetToken(r.Context(), *dp.TokenID)
 		if err != nil {
+			a.warn(r.Context(), "device-pairing poll: token lookup failed",
+				slog.String("device_code_prefix", devicePrefix(dp.DeviceCode)),
+				slog.Any("err", err))
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "lookup"})
 			return
 		}
@@ -221,6 +237,9 @@ func (a *API) poll(w http.ResponseWriter, r *http.Request) {
 			Scopes: tok.Scopes,
 		})
 		if err != nil {
+			a.warn(r.Context(), "device-pairing poll: marshal response failed",
+				slog.String("device_code_prefix", devicePrefix(dp.DeviceCode)),
+				slog.Any("err", err))
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 			return
 		}
@@ -233,22 +252,31 @@ func (a *API) poll(w http.ResponseWriter, r *http.Request) {
 			)
 			return
 		}
-		// Write succeeded; schedule the deferred mark-fetched. A failure
-		// here is logged so the security-sensitive narrow window (where
-		// plaintext_token sits in approved_unfetched indefinitely) is
-		// observable instead of silent.
-		go func(deviceCode string, logger *slog.Logger) {
+		// Write succeeded — kick off the mark-fetched in a fresh goroutine.
+		// This runs concurrently with the in-flight HTTP write of the body
+		// (Write may still be flushing kernel buffers when this fires); the
+		// design only requires that we have observed Write returning nil
+		// before scheduling. Failure here is logged so the security-
+		// sensitive narrow window (plaintext_token sitting in
+		// approved_unfetched indefinitely) is observable, not silent.
+		go func(deviceCode string, logger *slog.Logger, hook func(string, error)) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			if err := a.Pairings.MarkFetched(ctx, deviceCode); err != nil && logger != nil {
+			err := a.Pairings.MarkFetched(ctx, deviceCode)
+			if err != nil && logger != nil {
 				logger.WarnContext(ctx, "device-pairing mark-fetched failed",
 					slog.String("device_code_prefix", devicePrefix(deviceCode)),
 					slog.Any("err", err),
 				)
 			}
-		}(dp.DeviceCode, a.Logger)
+			if hook != nil {
+				hook(deviceCode, err)
+			}
+		}(dp.DeviceCode, a.Logger, a.OnMarkFetched)
 		return
 	}
+	a.warn(r.Context(), "device-pairing poll: unexpected status",
+		slog.String("status", string(dp.Status)))
 	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "unexpected status"})
 }
 
@@ -278,6 +306,7 @@ func (a *API) approve(w http.ResponseWriter, r *http.Request) {
 	// Re-verify the password (session alone is insufficient).
 	pwOK, err := users.VerifyPassword(secret.String(req.Password), caller.PasswordHash)
 	if err != nil {
+		a.warn(r.Context(), "device-pairing approve: password verify error", slog.Any("err", err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 		return
 	}
@@ -292,6 +321,7 @@ func (a *API) approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		a.warn(r.Context(), "device-pairing approve: lookup failed", slog.Any("err", err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 		return
 	}
@@ -322,6 +352,7 @@ func (a *API) approve(w http.ResponseWriter, r *http.Request) {
 	// when it polls (and the row is purged on fetch).
 	res, err := tokens.Generate("device-pairing", req.GrantedScopes)
 	if err != nil {
+		a.warn(r.Context(), "device-pairing approve: token generate failed", slog.Any("err", err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 		return
 	}
@@ -371,6 +402,7 @@ func (a *API) deny(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 			return
 		}
+		a.warn(r.Context(), "device-pairing deny: failed", slog.Any("err", err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 		return
 	}

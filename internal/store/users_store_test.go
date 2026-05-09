@@ -192,6 +192,43 @@ func TestInvites_BootstrapEnsureIdempotent(t *testing.T) {
 	}
 }
 
+// TestSignupTx_PrimaryKeyCollision_NotEmailInUse covers §16 review
+// finding #4: a UNIQUE-violation on users.id (PK) must NOT be
+// classified as ErrEmailInUse. The classifier looks for the email
+// constraint specifically; an unrelated PK collision should surface
+// the raw error so callers can decide what to do (typically: log and
+// 500, since a UUID collision is an internal-state surprise, not a
+// user-facing 409).
+func TestSignupTx_PrimaryKeyCollision_NotEmailInUse(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now().UTC()
+
+	// Pre-seed a user occupying ID "fixed-id".
+	mustInsertUser(t, s, "fixed-id", "first@example.com", RoleUser)
+
+	// Open a fresh invite for the second signup.
+	if err := s.InsertInvite(context.Background(), Invite{
+		Code: "INVITE2", Role: RoleUser, DefaultScopes: []string{},
+		CreatedAt: now, ExpiresAt: timePtr(now.Add(time.Hour)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// SignupTx with the *same* user ID but a *different* email. This
+	// must trigger a PK collision on users.id, not the email index.
+	err := s.SignupTx(context.Background(), "INVITE2", User{
+		ID: "fixed-id", Email: "different@example.com",
+		Name: "n", Role: RoleUser, PasswordHash: "h",
+		DefaultScopes: []string{}, CreatedAt: now,
+	}, now)
+	if err == nil {
+		t.Fatal("expected error on PK collision, got nil")
+	}
+	if errors.Is(err, ErrEmailInUse) {
+		t.Errorf("PK collision misclassified as ErrEmailInUse; got %v", err)
+	}
+}
+
 func TestInvites_SignupTx_RaceSingleWinner(t *testing.T) {
 	s := newTestStore(t)
 	now := time.Now().UTC()

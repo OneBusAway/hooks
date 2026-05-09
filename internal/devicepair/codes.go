@@ -11,10 +11,12 @@ import (
 	"strings"
 )
 
-// userCodeAlphabet is the 31-char base32-style alphabet specified in
-// design.md and tasks.md §7.1: base32 minus the visually-confusable
-// 0/1/I/L/O. The user-code shape is XXXX-XXXX (8 alphabet chars plus
-// a literal hyphen).
+// userCodeAlphabet is the 31-char alphabet specified in design.md and
+// tasks.md §7.1: the RFC 4648 base32 alphabet (A–Z, 2–7) minus the
+// visually-confusable letters I, L, and O — extended to 2–9 (8 and 9
+// added because they have no letter look-alikes in the remaining set
+// and broaden the codespace from the bare 31-letter form). The user-
+// code shape is XXXX-XXXX (8 alphabet chars plus a literal hyphen).
 const userCodeAlphabet = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
 
 // NewDeviceCode returns a fresh 32-char hex device_code (16 random bytes).

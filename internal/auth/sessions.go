@@ -17,11 +17,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebusaway/hooks/internal/audit"
 	"github.com/onebusaway/hooks/internal/secret"
 	"github.com/onebusaway/hooks/internal/store"
 )
@@ -57,13 +59,14 @@ type CookieOptions struct {
 type Manager struct {
 	Sessions store.SessionStore
 	Users    store.UserStore
-	Audit    store.AuditStore
+	Audit    audit.Recorder
+	Logger   *slog.Logger
 	Now      func() time.Time
 	Cookies  CookieOptions
 }
 
 // NewManager constructs a Manager with sensible defaults.
-func NewManager(s store.SessionStore, u store.UserStore, a store.AuditStore, opts CookieOptions) *Manager {
+func NewManager(s store.SessionStore, u store.UserStore, a audit.Recorder, opts CookieOptions) *Manager {
 	if opts.TTL == 0 {
 		opts.TTL = DefaultSessionTTL
 	}

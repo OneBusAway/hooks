@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebusaway/hooks/internal/audit"
 	"github.com/onebusaway/hooks/internal/secret"
 	"github.com/onebusaway/hooks/internal/store"
 	"github.com/onebusaway/hooks/internal/users"
@@ -49,7 +50,7 @@ func newManagerWithUser(t *testing.T, email, plaintext string, role store.Role, 
 	if err := s.InsertUser(context.Background(), u); err != nil {
 		t.Fatal(err)
 	}
-	m := NewManager(s.Sessions(), s.Users(), s.Audit(), CookieOptions{TTL: time.Hour})
+	m := NewManager(s.Sessions(), s.Users(), audit.New(s.Audit(), nil), CookieOptions{TTL: time.Hour})
 	return m, s, u
 }
 
@@ -217,8 +218,6 @@ func TestLogout_DeletesRow_ExpiresCookie(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	jar, _ := http.DefaultClient, ""
-	_ = jar
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/auth/logout", nil)
 	req.AddCookie(&http.Cookie{Name: SessionCookie, Value: cookieValue})
 	resp, err := http.DefaultClient.Do(req)
@@ -228,9 +227,40 @@ func TestLogout_DeletesRow_ExpiresCookie(t *testing.T) {
 		t.Fatalf("logout: %d", resp.StatusCode)
 	}
 
+	// Browser-state assertion: both cookies must be expired on the
+	// response so the user agent stops sending them. A regression that
+	// deletes the row but forgets to ClearCookies leaves the browser
+	// re-sending the now-invalid cookie on every subsequent request.
+	got := map[string]*http.Cookie{}
+	for _, c := range resp.Cookies() {
+		got[c.Name] = c
+	}
+	for _, name := range []string{SessionCookie, CSRFCookie} {
+		c, ok := got[name]
+		if !ok {
+			t.Errorf("logout response missing Set-Cookie for %q", name)
+			continue
+		}
+		// MaxAge < 0 is the explicit "delete this cookie" signal; an
+		// Expires in the past is the legacy equivalent. Either is fine,
+		// but at least one must be set.
+		if c.MaxAge >= 0 && (c.Expires.IsZero() || c.Expires.After(time.Now())) {
+			t.Errorf("cookie %q not expired: MaxAge=%d Expires=%v", name, c.MaxAge, c.Expires)
+		}
+	}
+
 	id, _, _ := strings.Cut(cookieValue, ".")
 	if _, err := s.GetSession(context.Background(), id); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("session not deleted: %v", err)
+	}
+
+	// Direct assertion: replaying the cookie's value through the manager
+	// must surface ErrInvalid (the row was deleted; the cookie no longer
+	// resolves to a session). Without this assertion the /probe-401 below
+	// is satisfied even by a handler that returns 401 for "no session in
+	// context", which is unrelated to the cookie itself being rejected.
+	if _, _, err := m.Lookup(context.Background(), cookieValue); !errors.Is(err, ErrInvalid) {
+		t.Errorf("Lookup of replayed cookie: got err=%v, want ErrInvalid", err)
 	}
 
 	// Reusing the cookie now hits middleware ClearCookies path; /probe is anon.

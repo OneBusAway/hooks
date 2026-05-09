@@ -1,11 +1,12 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
-	"github.com/google/uuid"
 	"github.com/onebusaway/hooks/internal/secret"
 	"github.com/onebusaway/hooks/internal/store"
 )
@@ -58,20 +59,23 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		a.warn(r.Context(), "auth: login authenticate failed", slog.Any("err", err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
 	cookieValue, _, err := a.Manager.CreateSession(r.Context(), u.ID, r.UserAgent(), clientIP(r))
 	if err != nil {
+		a.warn(r.Context(), "auth: login create session failed", slog.Any("err", err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
 	csrf, err := a.Manager.SetCookies(w, r, cookieValue)
 	if err != nil {
+		a.warn(r.Context(), "auth: login set cookies failed", slog.Any("err", err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
-	a.recordAudit(r, u.ID, "session.create", "user", u.ID, nil)
+	a.recordAudit(r.Context(), u.ID, "session.create", "user", u.ID, nil)
 	writeJSON(w, http.StatusOK, loginResponse{
 		UserID:    u.ID,
 		Email:     u.Email,
@@ -94,20 +98,18 @@ func (a *API) logout(w http.ResponseWriter, r *http.Request) {
 	if id != "" {
 		// Audit, attributing to the session's owner if we can find them.
 		if user, _, ok := a.Manager.FromContext(r.Context()); ok {
-			a.recordAudit(r, user.ID, "session.delete", "session", id, nil)
+			a.recordAudit(r.Context(), user.ID, "session.delete", "session", id, nil)
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (a *API) recordAudit(r *http.Request, actorUserID, action, targetType, targetID string, meta map[string]any) {
+func (a *API) recordAudit(ctx context.Context, actorUserID, action, targetType, targetID string, meta map[string]any) {
 	if a.Manager.Audit == nil || actorUserID == "" {
 		return
 	}
 	actorID := actorUserID
-	_ = a.Manager.Audit.Insert(r.Context(), store.AuditEvent{
-		ID:          uuid.NewString(),
-		At:          a.Manager.Now().UTC(),
+	a.Manager.Audit.Record(ctx, store.AuditEvent{
 		ActorUserID: &actorID,
 		Action:      action,
 		TargetType:  targetType,
@@ -116,21 +118,29 @@ func (a *API) recordAudit(r *http.Request, actorUserID, action, targetType, targ
 	})
 }
 
+func (a *API) warn(ctx context.Context, msg string, attrs ...slog.Attr) {
+	if a.Manager == nil || a.Manager.Logger == nil {
+		return
+	}
+	a.Manager.Logger.LogAttrs(ctx, slog.LevelWarn, msg, attrs...)
+}
+
 func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-// clientIP returns the request's best-effort client IP. Trust the
-// X-Forwarded-For header only when web.trust_proxy_headers is on; for now
-// callers can extract that themselves and we just take RemoteAddr.
+// clientIP returns the request's best-effort client IP by stripping the
+// :port suffix from RemoteAddr. It does NOT honor X-Forwarded-For or any
+// proxy headers — callers behind a trusted reverse proxy that need the
+// original client IP must not use this helper. (Centralized proxy-aware
+// IP extraction is a follow-up — see §17.4.)
 func clientIP(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
 	addr := r.RemoteAddr
-	// Strip :port if present.
 	for i := len(addr) - 1; i >= 0; i-- {
 		if addr[i] == ':' {
 			return addr[:i]
