@@ -58,16 +58,16 @@ func (n *Notifier) Unsubscribe(source string, ch chan int64) {
 // Publish notifies every subscriber of source about the latest sequence.
 // Send is non-blocking: if a subscriber channel is full, the signal is
 // dropped (the subscriber will catch up via the store on its next read).
+//
+// We hold n.mu across the iteration — Unsubscribe closes the channel, and
+// without serialization a concurrent unsubscribe could close a channel
+// between the snapshot and the send, panicking on send-on-closed-channel.
+// Each iteration is an O(1) non-blocking send, so the lock is held only
+// for the time it takes to walk the subscriber map.
 func (n *Notifier) Publish(source string, sequence int64) {
 	n.mu.Lock()
-	subs := n.subs[source]
-	chans := make([]chan int64, 0, len(subs))
-	for ch := range subs {
-		chans = append(chans, ch)
-	}
-	n.mu.Unlock()
-
-	for _, ch := range chans {
+	defer n.mu.Unlock()
+	for ch := range n.subs[source] {
 		select {
 		case ch <- sequence:
 		default:

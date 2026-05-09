@@ -124,6 +124,22 @@ If you want a permanent consumer instead of an SSE pull session:
 
 This prints a per-subscription signing secret **once** — store it on your consumer. The relay will sign every push with `X-Hooks-Signature: t=<unix>,v1=<hmac-sha256(secret, "<unix>.<body>")>`. See [`docs/consumer-verification.md`](docs/consumer-verification.md) for verification snippets in several languages.
 
+### Running it under Docker
+
+A `Dockerfile` and `render.yaml` Blueprint are checked into the repo. The image is a multi-stage build (Go builder → small Alpine runtime), runs as a non-root user, and exposes `/data` as a volume for the SQLite database.
+
+```sh
+make docker-build                      # builds hooks:dev locally
+mkdir -p ./hooks-data
+docker run --rm -v $(pwd)/hooks-data:/data hooks:dev init
+docker run --rm -p 8080:8080 \
+  -v $(pwd)/hooks-data:/data \
+  -e RENDER_WEBHOOK_SECRET \
+  hooks:dev
+```
+
+For a Render Blueprint deploy, push the repo and point Render at `render.yaml` — it provisions a 1 GiB persistent disk at `/data` and wires `/readyz` as the health check. See [`docs/quickstart.md`](docs/quickstart.md) for the full container walkthrough.
+
 ### For developers joining a deployed relay
 
 If your team already runs a `hooks` instance (Render or anywhere else) and you just need a CLI on your laptop, skip the first six steps. Either an admin sends you a signup URL (`https://hooks.example.com/signup?code=...`), or your relay was just deployed and an admin used the bootstrap link to create their account first. Then:

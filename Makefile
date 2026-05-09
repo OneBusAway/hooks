@@ -1,8 +1,12 @@
-.PHONY: build test lint run dev tidy sqlc sqlc-diff
+.PHONY: build test lint run dev tidy sqlc sqlc-diff docker-build docker-run docker-test
 
 GO ?= go
 HOOKS_BIN := ./bin/hooks
 HOOKSCTL_BIN := ./bin/hooksctl
+
+DOCKER ?= docker
+DOCKER_IMAGE ?= hooks
+DOCKER_TAG ?= dev
 
 build:
 	@mkdir -p bin
@@ -30,3 +34,19 @@ run: build
 
 dev: build
 	$(HOOKS_BIN) --dev
+
+docker-build:
+	$(DOCKER) build -t $(DOCKER_IMAGE):$(DOCKER_TAG) .
+
+# RENDER_WEBHOOK_SECRET must be in the caller's env (or pass --env-file).
+docker-run: docker-build
+	mkdir -p ./hooks-data
+	$(DOCKER) run --rm -it \
+		-p 8080:8080 \
+		-v $(CURDIR)/hooks-data:/data \
+		-e RENDER_WEBHOOK_SECRET \
+		-e HOOKS_PUBLIC_URL \
+		$(DOCKER_IMAGE):$(DOCKER_TAG)
+
+docker-test:
+	$(GO) test -tags=docker -count=1 ./dockertest/...

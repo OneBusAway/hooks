@@ -1,0 +1,27 @@
+# Render Blueprint for the hooks relay. After deploy, follow
+# docs/quickstart.md (section 3b) to bootstrap the admin account.
+services:
+  - type: web
+    name: hooks
+    runtime: docker
+    plan: starter
+    healthCheckPath: /readyz
+    autoDeploy: true
+    # Single instance only: the SQLite store is a single-writer design
+    # (see CLAUDE.md). Two pods against the same disk would corrupt it.
+    numInstances: 1
+    disk:
+      name: hooks-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: HOOKS_DATABASE_URL
+        value: /data/hooks.db
+      # Render's Docker runtime injects PORT=10000; bind to it so the
+      # platform's load balancer can reach us.
+      - key: HOOKS_LISTEN_ADDR
+        value: :10000
+      - key: HOOKS_PUBLIC_URL
+        sync: false
+      - key: RENDER_WEBHOOK_SECRET
+        sync: false
