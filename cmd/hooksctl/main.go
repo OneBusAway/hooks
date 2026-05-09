@@ -9,6 +9,7 @@
 //	hooksctl push  {add,list,get,pause,resume,rotate-secret,rm,test}
 //	hooksctl me    token  {add,list,revoke}
 //	hooksctl me    sub    {add,list,get,pause,resume,rotate-secret,rm,test}
+//	hooksctl invite {create [--role user|admin] [--scopes <list>] [--ttl 7d], list [--include-consumed], revoke <code>}
 //	hooksctl login [--profile <name>] [--scopes <list>] [--admin]
 //	hooksctl logout [--profile <name>]
 //	hooksctl whoami [--profile <name>]
@@ -49,6 +50,10 @@ Commands:
   me token revoke <id>                                  revoke one of the caller's tokens
   me sub {add|list|get|pause|resume|rotate-secret|rm|test}
                                                         push subscription parity scoped to caller
+  invite create [--role user|admin] [--scopes <list>] [--ttl 7d]
+                                                        mint a signup invite (admin only)
+  invite list [--include-consumed]                      list invites
+  invite revoke <code>                                  delete an unconsumed invite
   login [--profile <name>] [--scopes <list>] [--admin]  device-pair to obtain a PAT
   logout [--profile <name>]                             revoke local PAT and delete creds file
   whoami [--profile <name>]                             show the authenticated user
@@ -111,6 +116,8 @@ func run(args []string) int {
 		return cmdPush(g, rest)
 	case "me":
 		return cmdMe(g, rest)
+	case "invite":
+		return cmdInvite(g, rest)
 	case "login":
 		return cmdLogin(g, rest)
 	case "logout":
