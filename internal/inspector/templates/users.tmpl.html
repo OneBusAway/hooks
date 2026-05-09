@@ -1,0 +1,68 @@
+{{define "users"}}{{template "header" .}}
+<h1>Users</h1>
+
+{{if .Banner.Code}}
+<div class="banner">
+  Invite issued (signup URL shown once):
+  <code>{{.Banner.SignupURL}}</code>
+  <p class="muted">Code <code>{{.Banner.Code}}</code> · role <code>{{.Banner.Role}}</code>{{if .Banner.ExpiresAt}} · expires {{.Banner.ExpiresAt.Format "2006-01-02 15:04"}}{{end}}</p>
+</div>
+{{end}}
+
+<h2>Issue invite</h2>
+<form method="post" action="/inspector/users/invite" class="form-row">
+  <label>Role
+    <select name="role">
+      <option value="user">user</option>
+      <option value="admin">admin</option>
+    </select>
+  </label>
+  <label>Default scopes <input type="text" name="scopes" placeholder="render"></label>
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <button type="submit">Issue invite</button>
+</form>
+
+<h2>All users</h2>
+<table>
+  <thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Default scopes</th><th>Created</th><th>Status</th><th>Actions</th></tr></thead>
+  <tbody>
+  {{range .Users}}
+  <tr>
+    <td>{{.Email}}</td>
+    <td>{{.Name}}</td>
+    <td>{{.Role}}</td>
+    <td>
+      <form method="post" action="/inspector/users/{{.ID}}/update" class="inline">
+        <input type="text" name="default_scopes" value="{{range $i, $s := .DefaultScopes}}{{if $i}},{{end}}{{$s}}{{end}}" placeholder="render,stripe">
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <button type="submit">Save</button>
+      </form>
+    </td>
+    <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+    <td>{{if .DeactivatedAt}}<span class="tag">deactivated</span>{{else}}<span class="tag">active</span>{{end}}</td>
+    <td>
+      {{if .DeactivatedAt}}
+      <form method="post" action="/inspector/users/{{.ID}}/reactivate" class="inline">
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <button type="submit">Reactivate</button>
+      </form>
+      {{else}}
+      <form method="post" action="/inspector/users/{{.ID}}/deactivate" class="inline" onsubmit="return confirm('Type {{.Email}} to confirm deactivation. The form requires the email below to match.');">
+        <label class="muted">Confirm email <input type="text" name="confirm" placeholder="{{.Email}}" required></label>
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <button type="submit" class="danger">Deactivate</button>
+      </form>
+      {{end}}
+      <form method="post" action="/inspector/users/{{.ID}}/reset-password" class="inline">
+        <input type="password" name="new_password" placeholder="new password" required>
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <button type="submit">Reset password</button>
+      </form>
+    </td>
+  </tr>
+  {{else}}
+  <tr><td colspan="7" class="empty">No users yet.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+{{template "footer" .}}{{end}}

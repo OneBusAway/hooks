@@ -181,6 +181,12 @@ func Build(cfg *config.Config, registry *sources.Registry, logger *slog.Logger) 
 	insp.Audit = auditRec
 	insp.Users = st.Users()
 	insp.AuditReader = st.Audit()
+	insp.Invites = st.Invites()
+	insp.Cascader = st
+	insp.HashPassword = func(p string) (string, error) { return pkgUsers.HashPassword(secret.String(p)) }
+	insp.ValidatePolicy = func(email, plain string) error {
+		return pkgUsers.ValidatePassword(email, secret.String(plain))
+	}
 	insp.Register(mux)
 
 	// Server-rendered /login and /signup pages (the JSON /api/auth/login

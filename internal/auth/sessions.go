@@ -198,6 +198,15 @@ func (m *Manager) DeleteSession(ctx context.Context, cookieValue string) (string
 	return id, nil
 }
 
+// DeleteSessionsByUser invalidates every active session for userID.
+// Used by admin password-reset flows so a rotated password takes effect
+// immediately for any browser that already had a cookie. Returns
+// nil-on-empty (no rows) rather than ErrInvalid; callers do not need
+// to know whether the user had any live sessions.
+func (m *Manager) DeleteSessionsByUser(ctx context.Context, userID string) error {
+	return m.sessions.DeleteByUser(ctx, userID)
+}
+
 // SetCookies writes the hooks_session and hooks_csrf cookies onto w.
 // SetCookies is shared between login and the CSRF cookie rotation that
 // happens on session creation: every call generates a fresh hooks_csrf

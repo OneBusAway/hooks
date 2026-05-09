@@ -27,12 +27,13 @@ import (
 // sessionFixture wires the inspector with an auth.Manager so tests can
 // drive cookie-session-based authentication paths (tasks 11.10 and 11.12).
 type sessionFixture struct {
-	srv      *httptest.Server
-	st       *store.SQLite
-	notifier *pubsub.Notifier
-	push     *push.Manager
-	auth     *auth.Manager
-	client   *http.Client
+	srv       *httptest.Server
+	st        *store.SQLite
+	notifier  *pubsub.Notifier
+	push      *push.Manager
+	auth      *auth.Manager
+	client    *http.Client
+	inspector *Inspector
 }
 
 func newSessionFixture(t *testing.T) *sessionFixture {
@@ -72,7 +73,7 @@ func newSessionFixture(t *testing.T) *sessionFixture {
 		return http.ErrUseLastResponse
 	}}
 
-	return &sessionFixture{srv: srv, st: st, notifier: notifier, push: pmgr, auth: mgr, client: client}
+	return &sessionFixture{srv: srv, st: st, notifier: notifier, push: pmgr, auth: mgr, client: client, inspector: in}
 }
 
 // makeUser inserts a user with the given role and returns the created row.

@@ -41,6 +41,12 @@ var staticFS embed.FS
 
 const cookieName = "hooks_inspector_token"
 
+// Cascader runs the deactivate-and-cascade transaction. Implemented by
+// store.SQLite.DeactivateUserCascade. The same shape is in admin.API.
+type Cascader interface {
+	DeactivateUserCascade(ctx context.Context, id string, when time.Time) (store.CascadeRevokeResult, error)
+}
+
 // Inspector is the http handler set for /inspector.
 type Inspector struct {
 	Events   store.EventStore
@@ -70,7 +76,16 @@ type Inspector struct {
 	// audit_events ordered by `at DESC` with optional time-range filters
 	// pulled from the request query string.
 	AuditReader store.AuditStore
-	Logger      *slog.Logger
+	// Invites, Cascader, HashPassword, and ValidatePolicy power the
+	// /inspector/users admin page (task 11.5). They mirror the wiring on
+	// invites.API and admin.API so the inspector and JSON surfaces share
+	// the same business logic. When unset the admin page degrades to a
+	// read-only view (writes return 503).
+	Invites        store.InviteStore
+	Cascader       Cascader
+	HashPassword   func(plaintext string) (string, error)
+	ValidatePolicy func(email, plaintext string) error
+	Logger         *slog.Logger
 	Sources     []string
 	tpls        *template.Template
 	staticSub   fs.FS
@@ -170,6 +185,16 @@ func (in *Inspector) Register(mux *http.ServeMux) {
 
 	// /inspector/audit (task 11.6): admin-only HTML view of the audit log.
 	mux.Handle("GET /inspector/audit", wrap(in.auditList))
+
+	// /inspector/users (task 11.5): admin-only user table + invite form
+	// + per-row deactivate/reactivate/reset-password/edit. Mutations run
+	// through the same CSRF middleware as /inspector/me.
+	mux.Handle("GET /inspector/users", wrap(in.usersList))
+	mux.Handle("POST /inspector/users/invite", wrapH(csrf(http.HandlerFunc(in.usersInvite))))
+	mux.Handle("POST /inspector/users/{id}/deactivate", wrapH(csrf(http.HandlerFunc(in.usersDeactivate))))
+	mux.Handle("POST /inspector/users/{id}/reactivate", wrapH(csrf(http.HandlerFunc(in.usersReactivate))))
+	mux.Handle("POST /inspector/users/{id}/reset-password", wrapH(csrf(http.HandlerFunc(in.usersResetPassword))))
+	mux.Handle("POST /inspector/users/{id}/update", wrapH(csrf(http.HandlerFunc(in.usersUpdate))))
 }
 
 // requireAdmin enforces admin access for an inspector request.

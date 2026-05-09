@@ -135,7 +135,7 @@ All new and altered tables live in `internal/store/schema.sql` (the canonical sc
 - [x] 11.2 `/signup` page: serve form expecting `?code=` param; POST to `/api/auth/signup`; include hidden CSRF token; on success redirect to `/login`
 - [x] 11.3 `/device` page: prompt for user_code, display requesting IP / user-agent / requested scopes (with narrowing checkboxes), the "Approve only if you started this on this machine" warning, the password re-entry field, and a CSRF token. POST to `/api/auth/device/approve`; "Deny" button POSTs to `/api/auth/device/deny`.
 - [x] 11.4 `/inspector/me`: profile + own tokens (filtered by `kind`) + own subscriptions + "mint ephemeral PAT" form (CSRF-protected); admin sees a link to `/inspector/users` and `/inspector/audit`
-- [ ] 11.5 `/inspector/users` (admin): user table, "Issue invite" form (signup URL shown once), per-row deactivate (with email-confirmation modal; refuses last-admin), reactivate, reset-password, edit-default-scopes — all CSRF-protected
+- [x] 11.5 `/inspector/users` (admin): user table, "Issue invite" form (signup URL shown once), per-row deactivate (with email-confirmation modal; refuses last-admin), reactivate, reset-password, edit-default-scopes — all CSRF-protected
 - [x] 11.6 `/inspector/audit` (admin): audit-event log with actor and time-range filtering
 - [x] 11.7 `/inspector/me/push`: user-owned push-subscription view mirroring `/inspector/push` but without the owner column
 - [x] 11.8 Update `/inspector/tokens` (admin): add owner column (`system` vs user email) and `kind` column; add optional `owner_user_id` field on Add Token form for minting on behalf of users
