@@ -123,6 +123,19 @@ If you want a permanent consumer instead of an SSE pull session:
 
 This prints a per-subscription signing secret **once** — store it on your consumer. The relay will sign every push with `X-Hooks-Signature: t=<unix>,v1=<hmac-sha256(secret, "<unix>.<body>")>`. See [`docs/consumer-verification.md`](docs/consumer-verification.md) for verification snippets in several languages.
 
+### For developers joining a deployed relay
+
+If your team already runs a `hooks` instance (Render or anywhere else) and you just need a CLI on your laptop, skip the first six steps. Either an admin sends you a signup URL (`https://hooks.example.com/signup?code=...`), or your relay was just deployed and an admin used the bootstrap link to create their account first. Then:
+
+```sh
+hooksctl login --server https://hooks.example.com
+hooksctl forward render --to http://localhost:3000/webhooks/render
+```
+
+`login` prints a short user code, opens the relay's `/device` page in your browser, asks you to log in and re-enter your password to approve the pairing, then writes a PAT to `~/.config/hooks/credentials.default`. `forward` uses that PAT — no further token plumbing.
+
+See [`docs/accounts.md`](docs/accounts.md) for the full walkthrough (scopes, admin operations, multiple profiles, ephemeral vs long-lived listener tokens, deactivation semantics).
+
 ### Troubleshooting
 
 - **HTTP 401 in the relay logs** — secret mismatch between `RENDER_WEBHOOK_SECRET` and what Render is signing with. Re-copy the signing secret from the Render dashboard.

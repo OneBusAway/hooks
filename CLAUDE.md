@@ -62,9 +62,42 @@ inbound webhook ──► /ingest/<source> ──► verifier ──► store.Ap
 
 - **`internal/config`** — loads `hooks.yaml`, applies env interpolation (`${VAR}` and `${VAR:-default}`), then env-var overrides (`HOOKS_LISTEN_ADDR`, `HOOKS_DATABASE_URL`, `HOOKS_LOG_LEVEL`). **A `tokens:` field is rejected at load time** — listener tokens live in the database, not YAML. `verifier:` is required for every source; unsigned sources are not supported. Defaults: `BodySizeLimit=1MiB`, `DedupeWindow=24h`, `SkewWindow=5m`, source `Retention=30d`. Retention `0` / `forever` / `never` disables auto-prune for that source.
 
-- **`internal/inspector`** — admin-only web UI under `/inspector`. Templates and static assets are `//go:embed`-ed; the binary is fully self-contained. Auth is a cookie carrying the same plaintext bearer token the API uses (server-side lookup is identical Argon2id constant-time compare).
+- **`internal/inspector`** — admin-only web UI under `/inspector`. Templates and static assets are `//go:embed`-ed; the binary is fully self-contained. Auth is either a `hooks_session=<id>.<plaintext>` cookie (post-login, server-side `user_sessions` row, SHA-256 hashed) or — legacy — a cookie carrying the plaintext bearer token (Argon2id-hashed lookup, identical to API auth). New logins always create a `user_sessions` row; the legacy path is accept-on-read only.
 
-- **`internal/prune`** — hourly per-source pruner that respects each source's configured retention. The `hooks prune --older-than <dur>` CLI bypasses configured retention for ad-hoc cleanup.
+- **`internal/prune`** — hourly per-source pruner that respects each source's configured retention. The `hooks prune --older-than <dur>` CLI bypasses configured retention for ad-hoc cleanup. Also reaps `ephemeral=true` listener tokens whose `last_used_at` is more than 24h in the past (forward crash-safety net) and `device_pairings` rows 24h after terminal state.
+
+- **`internal/users`** — `users` table (id, email, name, role, password_hash Argon2id, default_scopes, deactivated_at). Owns signup-time password policy enforcement (length ≥ 12, no email substring; failed-policy reason logged, never the plaintext). `Deactivate` is the cascading-revoke path: in one tx it sets `deactivated_at`, revokes every PAT/listener token, and pauses every push subscription owned by the user. A last-admin guard refuses with HTTP 409 if zero admins would remain (checked before AND inside the tx). Reactivation flips `deactivated_at` to NULL and **does not** restore tokens or unpause subscriptions — the user must reissue. Matches GitHub's UX; documented in `docs/security.md`.
+
+- **`internal/audit`** — append-only `audit_events` table surfaced at `/inspector/audit` (admin). Recorder hangs off mutating handlers (invites, users, tokens, sessions, device pairings). Prune loop does not touch this table; metadata is small (operator-action volume, not webhook volume).
+
+- **`internal/ratelimit`** — in-process token-bucket-per-IP (and per-user, for device-approve) middleware. Wired onto auth surfaces in `internal/server.registerAuthRoutes`. Buckets live in process memory and reset on restart — acceptable for the single-process SQLite posture. Limits live next to the route registration; check `internal/server/server.go` for current values.
+
+- **`internal/auth`** — `Manager` plus session middleware and `/api/auth/login` + `/api/auth/logout` JSON handlers. Sessions are 32 random bytes hashed SHA-256, **not** Argon2id (random secrets have no offline-attack surface; per-request Argon2 here is pure cost). 30-day sliding TTL.
+
+- **`internal/invites`** — invite issuance + lifecycle, plus the `/api/auth/signup` JSON handler. Bootstrap invite ensure runs on `hooks init` against an empty users table and inserts a single `bootstrap=true`, role `admin`, `expires_at = now + 24h` row. The bootstrap invite is consumed automatically the first time **any** user is created. Once any account exists, signup via the bootstrap URL returns 409.
+
+- **`internal/devicepair`** — CLI device-pairing flow (`/api/auth/device/{start,poll,approve,deny}` + the server-rendered `/device` page in `internal/webpages`). Approval requires re-entering the password (live session is not enough). Default scope on approval is `account` only; `--scopes`/`--admin` opt-in. Plaintext is briefly persisted on the device row between approval and the CLI's first poll, then NULL'd in a deferred update on handler return. Sweeper transitions stale pendings to `expired`. Phishing defenses (narrow-by-default scope, approver context display, password re-entry) are layered; documented in `docs/security.md`.
+
+- **`internal/me`** — self-service `/api/me/*` JSON handlers (profile, tokens, push subscriptions). Token creation enforces scope rules: a non-admin user can only request scopes they hold (default_scopes ∪ {account}); admins implicitly hold every source scope and `admin`; empty scope arrays on `kind='pat'` are normalized to `["account"]` rather than minting an unprivileged ghost.
+
+- **`internal/admin`** — admin-only `/api/users/*`, `/api/invites/*`, `/api/audit` JSON handlers and admin filters (`?owner=...`) on the existing `/api/tokens` and `/api/push-subscriptions` endpoints.
+
+- **`internal/web`** — CSRF middleware (Origin/Referer match + per-session double-submit token cookie). Bearer-only requests skip CSRF (no cookie → can't be CSRF'd). Wired around every cookie-authenticated mutation in `registerAuthRoutes`.
+
+- **`internal/webpages`** — server-rendered `/login`, `/signup`, `/device` HTML pages. Templates `//go:embed`-ed alongside the inspector. `/device` is where the device-pairing approval form lives; the JSON `/api/auth/device/*` endpoints exist for hooksctl + SPA callers.
+
+### Token kinds
+
+Listener tokens and PATs share a row schema (`listener_tokens`) but are routed by `kind` at lookup time:
+
+- **`kind='listener'`** — authorizes `/subscribe/<source>` and (when admin-scoped) the inspector. Cannot reach `/api/me/*`.
+- **`kind='pat'`** — owned by a user; authorizes `/api/me/*` and the inspector. Cannot subscribe to event traffic.
+
+Setting `owner_user_id=NULL` is reserved for system tokens minted by `hooks init` or `hooksctl token add` against an empty DB. NULL ownership does not mutate scopes — system tokens retain whatever scopes they were minted with.
+
+### Cookie session model vs token Argon2id
+
+Cookie session secrets are 32 random bytes, hashed **SHA-256**. Bearer-token plaintexts (PATs and listener tokens) and passwords are hashed **Argon2id**. The asymmetry is deliberate — Argon2id buys nothing for high-entropy random secrets, costs CPU per request, and would produce a slowdown under sustained inspector load with no security benefit. See `docs/security.md` for the rationale.
 
 ## Conventions
 

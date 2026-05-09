@@ -165,10 +165,10 @@ All new and altered tables live in `internal/store/schema.sql` (the canonical sc
 
 ## 14. Documentation
 
-- [ ] 14.1 `docs/accounts.md`: walk through the cloud onboarding flow — deploy, hit signup URL, log in, run `hooksctl login` (covering `--scopes`/`--admin`), run `hooksctl forward` (default ephemeral path AND `--token` long-lived path)
-- [ ] 14.2 Update `docs/security.md` with: the device-pairing plaintext window; the cookie session model and SHA-256-vs-Argon2 rationale; the cascading-revoke + reactivation-friction semantics; the CSRF strategy; the rate-limiting defaults; the audit-log surface; the password policy
-- [ ] 14.3 Update `README.md` with a short "for developers joining a deployed relay" section pointing at `docs/accounts.md`
-- [ ] 14.4 Update `CLAUDE.md` to mention the new `internal/users`, `internal/audit`, `internal/ratelimit` packages, the `/api/me/*` and `/api/auth/*` surfaces, the cookie session model (SHA-256 hashed, distinct from token Argon2id), the CSRF posture, the kind-split tokens (`pat` vs `listener`), and the system-vs-user-owned distinction on tokens and subscriptions
+- [x] 14.1 `docs/accounts.md`: walk through the cloud onboarding flow — deploy, hit signup URL, log in, run `hooksctl login` (covering `--scopes`/`--admin`), run `hooksctl forward` (default ephemeral path AND `--token` long-lived path)
+- [x] 14.2 Update `docs/security.md` with: the device-pairing plaintext window; the cookie session model and SHA-256-vs-Argon2 rationale; the cascading-revoke + reactivation-friction semantics; the CSRF strategy; the rate-limiting defaults; the audit-log surface; the password policy
+- [x] 14.3 Update `README.md` with a short "for developers joining a deployed relay" section pointing at `docs/accounts.md`
+- [x] 14.4 Update `CLAUDE.md` to mention the new `internal/users`, `internal/audit`, `internal/ratelimit` packages, the `/api/me/*` and `/api/auth/*` surfaces, the cookie session model (SHA-256 hashed, distinct from token Argon2id), the CSRF posture, the kind-split tokens (`pat` vs `listener`), and the system-vs-user-owned distinction on tokens and subscriptions
 
 ## 15. Verification and release
 
