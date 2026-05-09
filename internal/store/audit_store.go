@@ -15,8 +15,8 @@ func auditEventFromGen(r sqlcgen.AuditEvent) (AuditEvent, error) {
 		At:           time.Unix(0, r.At).UTC(),
 		ActorUserID:  ptrFromNullString(r.ActorUserID),
 		ActorTokenID: ptrFromNullString(r.ActorTokenID),
-		Action:       r.Action,
-		TargetType:   r.TargetType,
+		Action:       AuditAction(r.Action),
+		TargetType:   AuditTargetType(r.TargetType),
 		TargetID:     r.TargetID,
 	}
 	if r.Metadata != "" {
@@ -50,8 +50,8 @@ func (s *SQLite) InsertAuditEvent(ctx context.Context, e AuditEvent) error {
 		At:           e.At.UTC().UnixNano(),
 		ActorUserID:  nullStringPtr(e.ActorUserID),
 		ActorTokenID: nullStringPtr(e.ActorTokenID),
-		Action:       e.Action,
-		TargetType:   e.TargetType,
+		Action:       string(e.Action),
+		TargetType:   string(e.TargetType),
 		TargetID:     e.TargetID,
 		Metadata:     string(mb),
 	})

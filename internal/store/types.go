@@ -300,14 +300,23 @@ func (p *DevicePairing) ApprovedToken() (plaintext, tokenID string, ok bool) {
 	return *p.PlaintextToken, *p.TokenID, true
 }
 
+// AuditAction is the typed string for AuditEvent.Action. The audit
+// package owns the closed set of constants (audit.Action*); the named
+// type lives here to avoid an import cycle (audit imports store).
+type AuditAction string
+
+// AuditTargetType is the typed string for AuditEvent.TargetType, with
+// the same rationale as AuditAction.
+type AuditTargetType string
+
 // AuditEvent is one row in the audit log.
 type AuditEvent struct {
 	ID           string
 	At           time.Time
 	ActorUserID  *string
 	ActorTokenID *string
-	Action       string
-	TargetType   string
+	Action       AuditAction
+	TargetType   AuditTargetType
 	TargetID     string
 	Metadata     map[string]any
 }

@@ -65,7 +65,7 @@ type Pages struct {
 
 // New constructs a Pages handler. Templates are parsed once at
 // construction; both /login and /signup share the same set. The Pages
-// handler reads auth.Manager.Cookies.TrustProxyHeaders to mirror the
+// handler reads auth.Manager.TrustProxyHeaders() to mirror the
 // post-session cookie's Secure flag policy on the pre-session CSRF cookie.
 func New(authMgr *auth.Manager, signup SignupFunc, logger *slog.Logger) (*Pages, error) {
 	tpls, err := template.New("").ParseFS(templatesFS, "templates/*.tmpl.html")
@@ -189,7 +189,7 @@ func (p *Pages) LoginPOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.clearPreSessionCSRF(w, r)
-	p.recordAudit(r.Context(), u.ID, audit.ActionSessionCreate, "user", u.ID, nil)
+	p.recordAudit(r.Context(), u.ID, audit.ActionSessionCreate, audit.TargetTypeUser, u.ID, nil)
 
 	dest := next
 	if dest == "" {
@@ -347,12 +347,16 @@ func (p *Pages) warn(ctx context.Context, msg string, attrs ...slog.Attr) {
 	p.Logger.LogAttrs(ctx, slog.LevelWarn, msg, attrs...)
 }
 
-func (p *Pages) recordAudit(ctx context.Context, actor, action, targetType, targetID string, meta map[string]any) {
-	if p.Auth == nil || p.Auth.Audit == nil {
+func (p *Pages) recordAudit(ctx context.Context, actor string, action audit.Action, targetType audit.TargetType, targetID string, meta map[string]any) {
+	if p.Auth == nil {
+		return
+	}
+	rec := p.Auth.Auditor()
+	if rec == nil {
 		return
 	}
 	a := actor
-	p.Auth.Audit.Record(ctx, store.AuditEvent{
+	rec.Record(ctx, store.AuditEvent{
 		ActorUserID: &a,
 		Action:      action,
 		TargetType:  targetType,
@@ -387,7 +391,7 @@ func clientIP(r *http.Request) string {
 
 // requestIsHTTPS mirrors auth.Manager's policy: r.TLS is the canonical
 // signal; X-Forwarded-Proto is honored only when the operator opted in
-// via web.trust_proxy_headers (auth.Manager.Cookies.TrustProxyHeaders).
+// via web.trust_proxy_headers (auth.Manager.TrustProxyHeaders()).
 func (p *Pages) requestIsHTTPS(r *http.Request) bool {
 	if r == nil {
 		return false
@@ -395,7 +399,7 @@ func (p *Pages) requestIsHTTPS(r *http.Request) bool {
 	if r.TLS != nil {
 		return true
 	}
-	if p.Auth != nil && p.Auth.Cookies.TrustProxyHeaders {
+	if p.Auth != nil && p.Auth.TrustProxyHeaders() {
 		if proto := r.Header.Get("X-Forwarded-Proto"); strings.EqualFold(proto, "https") {
 			return true
 		}

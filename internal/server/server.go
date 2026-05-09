@@ -104,7 +104,7 @@ func Build(cfg *config.Config, registry *sources.Registry, logger *slog.Logger) 
 		TTL:               cfg.Web.SessionTTL,
 		TrustProxyHeaders: cfg.Web.TrustProxyHeaders,
 	})
-	authMgr.Logger = logger
+	authMgr.SetLogger(logger)
 
 	authAPI := auth.NewAPI(authMgr)
 

@@ -20,7 +20,7 @@ const dummyHash = "$argon2id$v=19$m=65536,t=1,p=4$aaaaaaaaaaaaaaaaaaaaaa$bbbbbbb
 // status. ErrDeactivated is returned when the credentials are correct but
 // the account is deactivated.
 func (m *Manager) Authenticate(ctx context.Context, email string, password secret.String) (store.User, error) {
-	u, err := m.Users.GetByEmail(ctx, email)
+	u, err := m.users.GetByEmail(ctx, email)
 	if errors.Is(err, store.ErrNotFound) {
 		// Run a dummy verify so timing doesn't leak email existence.
 		_, _ = users.VerifyPassword(password, dummyHash)

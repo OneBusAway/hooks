@@ -23,8 +23,8 @@ func TestDeleteSession_RejectsForgedCookie(t *testing.T) {
 	id := uuid.NewString()
 	sess := store.Session{
 		ID: id, UserID: u.ID, SecretHash: hashSessionSecret(plaintext),
-		CreatedAt: m.Now().UTC(), LastUsedAt: m.Now().UTC(),
-		ExpiresAt: m.Now().UTC().Add(time.Hour),
+		CreatedAt: m.now().UTC(), LastUsedAt: m.now().UTC(),
+		ExpiresAt: m.now().UTC().Add(time.Hour),
 	}
 	if err := s.InsertSession(context.Background(), sess); err != nil {
 		t.Fatal(err)

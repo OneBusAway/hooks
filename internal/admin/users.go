@@ -114,7 +114,7 @@ func (a *API) PatchUser(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 		return
 	}
-	a.recordAudit(r.Context(), caller, audit.ActionUserUpdate, "user", id, map[string]any{
+	a.recordAudit(r.Context(), caller, audit.ActionUserUpdate, audit.TargetTypeUser, id, map[string]any{
 		"name":           name,
 		"default_scopes": scopes,
 	})
@@ -169,7 +169,7 @@ func (a *API) Deactivate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 		return
 	}
-	a.recordAudit(r.Context(), caller, audit.ActionUserDeactivate, "user", id, map[string]any{
+	a.recordAudit(r.Context(), caller, audit.ActionUserDeactivate, audit.TargetTypeUser, id, map[string]any{
 		"tokens_revoked":       res.TokensRevoked,
 		"subscriptions_paused": res.SubscriptionsPaused,
 	})
@@ -189,7 +189,7 @@ func (a *API) Reactivate(w http.ResponseWriter, r *http.Request) {
 		a.notFoundOr500(r.Context(), w, "admin: reactivate failed", err)
 		return
 	}
-	a.recordAudit(r.Context(), caller, audit.ActionUserReactivate, "user", id, nil)
+	a.recordAudit(r.Context(), caller, audit.ActionUserReactivate, audit.TargetTypeUser, id, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -252,7 +252,7 @@ func (a *API) ResetPassword(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	a.recordAudit(r.Context(), caller, audit.ActionUserPasswordReset, "user", id, nil)
+	a.recordAudit(r.Context(), caller, audit.ActionUserPasswordReset, audit.TargetTypeUser, id, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 

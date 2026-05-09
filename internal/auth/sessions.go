@@ -55,14 +55,16 @@ type CookieOptions struct {
 }
 
 // Manager is the session-management surface used by handlers and the
-// inspector. It is safe for concurrent use.
+// inspector. It is safe for concurrent use. Construct via NewManager;
+// fields are unexported so a zero-value Manager{} with nil deps is a
+// compile-time error rather than a first-call panic.
 type Manager struct {
-	Sessions store.SessionStore
-	Users    store.UserStore
-	Audit    audit.Recorder
-	Logger   *slog.Logger
-	Now      func() time.Time
-	Cookies  CookieOptions
+	sessions store.SessionStore
+	users    store.UserStore
+	audit    audit.Recorder
+	logger   *slog.Logger
+	now      func() time.Time
+	cookies  CookieOptions
 }
 
 // NewManager constructs a Manager with sensible defaults.
@@ -71,13 +73,29 @@ func NewManager(s store.SessionStore, u store.UserStore, a audit.Recorder, opts 
 		opts.TTL = DefaultSessionTTL
 	}
 	return &Manager{
-		Sessions: s,
-		Users:    u,
-		Audit:    a,
-		Now:      time.Now,
-		Cookies:  opts,
+		sessions: s,
+		users:    u,
+		audit:    a,
+		now:      time.Now,
+		cookies:  opts,
 	}
 }
+
+// SetLogger attaches an *slog.Logger to the manager. Used by server.Build
+// after construction (the logger is shared across the wiring root) and by
+// tests to silence output. A nil logger is treated as "no logging" by the
+// internal warn helpers.
+func (m *Manager) SetLogger(l *slog.Logger) { m.logger = l }
+
+// Auditor returns the audit recorder the manager was constructed with.
+// Exposed because internal/webpages records its own audit events through
+// the same recorder rather than carrying a separate dependency.
+func (m *Manager) Auditor() audit.Recorder { return m.audit }
+
+// TrustProxyHeaders reports whether the manager was constructed to honor
+// X-Forwarded-Proto when deciding cookie Secure flags. Used by
+// internal/webpages so its pre-session cookies follow the same policy.
+func (m *Manager) TrustProxyHeaders() bool { return m.cookies.TrustProxyHeaders }
 
 // CreateSession inserts a new user_sessions row backing a fresh login,
 // returning the cookie plaintext (id.secret) the caller should set on the
@@ -90,18 +108,18 @@ func (m *Manager) CreateSession(ctx context.Context, userID, userAgent, ip strin
 		return "", store.Session{}, err
 	}
 	id := uuid.NewString()
-	now := m.Now().UTC()
+	now := m.now().UTC()
 	sess = store.Session{
 		ID:         id,
 		UserID:     userID,
 		SecretHash: hashSessionSecret(plaintext),
 		CreatedAt:  now,
 		LastUsedAt: now,
-		ExpiresAt:  now.Add(m.Cookies.TTL),
+		ExpiresAt:  now.Add(m.cookies.TTL),
 		UserAgent:  truncate(userAgent, 256),
 		IP:         truncate(ip, 64),
 	}
-	if err := m.Sessions.Insert(ctx, sess); err != nil {
+	if err := m.sessions.Insert(ctx, sess); err != nil {
 		return "", store.Session{}, err
 	}
 	return id + "." + plaintext, sess, nil
@@ -116,7 +134,7 @@ func (m *Manager) Lookup(ctx context.Context, cookieValue string) (store.User, s
 	if !ok || id == "" || plaintext == "" {
 		return store.User{}, store.Session{}, ErrInvalid
 	}
-	sess, err := m.Sessions.LookupByID(ctx, id)
+	sess, err := m.sessions.LookupByID(ctx, id)
 	if err != nil {
 		return store.User{}, store.Session{}, ErrInvalid
 	}
@@ -124,26 +142,26 @@ func (m *Manager) Lookup(ctx context.Context, cookieValue string) (store.User, s
 	if !secret.EqualString(want, sess.SecretHash) {
 		return store.User{}, store.Session{}, ErrInvalid
 	}
-	now := m.Now().UTC()
+	now := m.now().UTC()
 	if now.After(sess.ExpiresAt) {
 		// Best-effort cleanup of the now-expired row.
-		_ = m.Sessions.Delete(ctx, sess.ID)
+		_ = m.sessions.Delete(ctx, sess.ID)
 		return store.User{}, store.Session{}, ErrExpired
 	}
-	user, err := m.Users.GetByID(ctx, sess.UserID)
+	user, err := m.users.GetByID(ctx, sess.UserID)
 	if err != nil {
 		return store.User{}, store.Session{}, ErrInvalid
 	}
 	if user.DeactivatedAt != nil {
-		_ = m.Sessions.Delete(ctx, sess.ID)
+		_ = m.sessions.Delete(ctx, sess.ID)
 		return store.User{}, store.Session{}, ErrInvalid
 	}
 
 	// Slide the expiry only when the persisted last_used_at is "stale enough".
 	// This keeps writes off the hot path under sustained inspector use.
 	if now.Sub(sess.LastUsedAt) >= MinSlideInterval {
-		newExp := now.Add(m.Cookies.TTL)
-		if err := m.Sessions.Touch(ctx, sess.ID, now, newExp); err != nil {
+		newExp := now.Add(m.cookies.TTL)
+		if err := m.sessions.Touch(ctx, sess.ID, now, newExp); err != nil {
 			// Touching is best-effort; do not fail auth on a write hiccup.
 			_ = err
 		} else {
@@ -166,7 +184,7 @@ func (m *Manager) DeleteSession(ctx context.Context, cookieValue string) (string
 	if !ok || id == "" || plaintext == "" {
 		return "", ErrInvalid
 	}
-	sess, err := m.Sessions.LookupByID(ctx, id)
+	sess, err := m.sessions.LookupByID(ctx, id)
 	if err != nil {
 		return "", ErrInvalid
 	}
@@ -174,7 +192,7 @@ func (m *Manager) DeleteSession(ctx context.Context, cookieValue string) (string
 	if !secret.EqualString(want, sess.SecretHash) {
 		return "", ErrInvalid
 	}
-	if err := m.Sessions.Delete(ctx, id); err != nil {
+	if err := m.sessions.Delete(ctx, id); err != nil {
 		return id, err
 	}
 	return id, nil
@@ -190,8 +208,8 @@ func (m *Manager) SetCookies(w http.ResponseWriter, r *http.Request, cookieValue
 	if err != nil {
 		return "", err
 	}
-	secure := requestIsHTTPS(r, m.Cookies.TrustProxyHeaders)
-	maxAge := int(m.Cookies.TTL / time.Second)
+	secure := requestIsHTTPS(r, m.cookies.TrustProxyHeaders)
+	maxAge := int(m.cookies.TTL / time.Second)
 	http.SetCookie(w, &http.Cookie{
 		Name:     SessionCookie,
 		Value:    cookieValue,
@@ -217,7 +235,7 @@ func (m *Manager) SetCookies(w http.ResponseWriter, r *http.Request, cookieValue
 // validation failure so a cookie that no longer authenticates is also
 // removed from the browser.
 func (m *Manager) ClearCookies(w http.ResponseWriter, r *http.Request) {
-	secure := requestIsHTTPS(r, m.Cookies.TrustProxyHeaders)
+	secure := requestIsHTTPS(r, m.cookies.TrustProxyHeaders)
 	for _, name := range []string{SessionCookie, CSRFCookie} {
 		http.SetCookie(w, &http.Cookie{
 			Name:     name,

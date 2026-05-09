@@ -213,7 +213,7 @@ func (a *API) recordTransfer(ctx context.Context, caller store.Token, tokenID st
 		ActorUserID:  caller.OwnerUserID,
 		ActorTokenID: &tokID,
 		Action:       audit.ActionTokenTransferOwner,
-		TargetType:   "token",
+		TargetType:   audit.TargetTypeToken,
 		TargetID:     tokenID,
 		Metadata:     meta,
 	})

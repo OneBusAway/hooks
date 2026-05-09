@@ -363,7 +363,7 @@ func (a *API) recordTransfer(ctx context.Context, caller store.Token, subID stri
 		ActorUserID:  caller.OwnerUserID,
 		ActorTokenID: &tokID,
 		Action:       audit.ActionSubscriptionTransferOwner,
-		TargetType:   "push_subscription",
+		TargetType:   audit.TargetTypePushSubscription,
 		TargetID:     subID,
 		Metadata:     meta,
 	})

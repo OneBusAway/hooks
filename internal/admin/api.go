@@ -133,7 +133,7 @@ func (a *API) now() time.Time {
 	return time.Now().UTC()
 }
 
-func (a *API) recordAudit(ctx context.Context, caller adminCaller, action, targetType, targetID string, meta map[string]any) {
+func (a *API) recordAudit(ctx context.Context, caller adminCaller, action audit.Action, targetType audit.TargetType, targetID string, meta map[string]any) {
 	if a.Audit == nil {
 		return
 	}

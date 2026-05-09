@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/onebusaway/hooks/internal/audit"
 	"github.com/onebusaway/hooks/internal/store"
 	"github.com/onebusaway/hooks/internal/tokens"
 )
@@ -151,7 +152,7 @@ func (a *API) CreateToken(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 		return
 	}
-	a.recordAudit(r.Context(), caller, "token.create", "token", tok.ID, map[string]any{
+	a.recordAudit(r.Context(), caller, audit.ActionTokenCreate, audit.TargetTypeToken, tok.ID, map[string]any{
 		"kind":   string(kind),
 		"scopes": scopes,
 	})
@@ -195,6 +196,6 @@ func (a *API) RevokeToken(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 		return
 	}
-	a.recordAudit(r.Context(), caller, "token.revoke", "token", id, nil)
+	a.recordAudit(r.Context(), caller, audit.ActionTokenRevoke, audit.TargetTypeToken, id, nil)
 	w.WriteHeader(http.StatusNoContent)
 }

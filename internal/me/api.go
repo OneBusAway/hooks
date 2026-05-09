@@ -85,7 +85,7 @@ func (a *API) warn(ctx context.Context, msg string, attrs ...slog.Attr) {
 // authenticated via a PAT bearer, ActorTokenID is populated alongside
 // ActorUserID so the audit trail distinguishes between two PATs owned by
 // the same user.
-func (a *API) recordAudit(ctx context.Context, caller Caller, action, targetType, targetID string, meta map[string]any) {
+func (a *API) recordAudit(ctx context.Context, caller Caller, action audit.Action, targetType audit.TargetType, targetID string, meta map[string]any) {
 	if a.Audit == nil {
 		return
 	}

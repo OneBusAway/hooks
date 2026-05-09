@@ -92,14 +92,14 @@ func Provision(
 		rec.Record(ctx, store.AuditEvent{
 			ActorUserID: &id,
 			Action:      audit.ActionUserCreate,
-			TargetType:  "user",
+			TargetType:  audit.TargetTypeUser,
 			TargetID:    u.ID,
 			Metadata:    map[string]any{"email": u.Email, "role": string(u.Role)},
 		})
 		rec.Record(ctx, store.AuditEvent{
 			ActorUserID: &id,
 			Action:      audit.ActionInviteConsume,
-			TargetType:  "invite",
+			TargetType:  audit.TargetTypeInvite,
 			TargetID:    code,
 		})
 	}

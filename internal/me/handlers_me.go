@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/onebusaway/hooks/internal/audit"
 )
 
 type meView struct {
@@ -62,7 +64,7 @@ func (a *API) PatchMe(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 		return
 	}
-	a.recordAudit(r.Context(), caller, "user.update", "user", caller.User.ID, map[string]any{
+	a.recordAudit(r.Context(), caller, audit.ActionUserUpdate, audit.TargetTypeUser, caller.User.ID, map[string]any{
 		"name": name,
 	})
 	writeJSON(w, http.StatusOK, meView{

@@ -114,7 +114,7 @@ func (a *API) Create(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 		return
 	}
-	a.recordAudit(r.Context(), &caller.ID, "invite.create", "invite", code, map[string]any{
+	a.recordAudit(r.Context(), &caller.ID, audit.ActionInviteCreate, audit.TargetTypeInvite, code, map[string]any{
 		"role": string(role),
 	})
 	writeJSON(w, http.StatusCreated, toInviteResponse(inv))
@@ -171,7 +171,7 @@ func (a *API) Delete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 		return
 	}
-	a.recordAudit(r.Context(), &caller.ID, "invite.revoke", "invite", code, nil)
+	a.recordAudit(r.Context(), &caller.ID, audit.ActionInviteRevoke, audit.TargetTypeInvite, code, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -263,7 +263,7 @@ func (a *API) requireAdmin(w http.ResponseWriter, r *http.Request) (store.User, 
 	return user, true
 }
 
-func (a *API) recordAudit(ctx context.Context, actor *string, action, targetType, targetID string, meta map[string]any) {
+func (a *API) recordAudit(ctx context.Context, actor *string, action audit.Action, targetType audit.TargetType, targetID string, meta map[string]any) {
 	if a.Audit == nil {
 		return
 	}

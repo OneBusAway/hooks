@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/onebusaway/hooks/internal/audit"
 	"github.com/onebusaway/hooks/internal/ratelimit"
 	"github.com/onebusaway/hooks/internal/secret"
 	"github.com/onebusaway/hooks/internal/store"
@@ -76,7 +77,7 @@ func (a *API) Login(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
-	a.recordAudit(r.Context(), u.ID, "session.create", "user", u.ID, nil)
+	a.recordAudit(r.Context(), u.ID, audit.ActionSessionCreate, audit.TargetTypeUser, u.ID, nil)
 	writeJSON(w, http.StatusOK, loginResponse{
 		UserID:    u.ID,
 		Email:     u.Email,
@@ -107,18 +108,22 @@ func (a *API) Logout(w http.ResponseWriter, r *http.Request) {
 	if id != "" {
 		// Audit, attributing to the session's owner if we can find them.
 		if user, _, ok := a.Manager.FromContext(r.Context()); ok {
-			a.recordAudit(r.Context(), user.ID, "session.delete", "session", id, nil)
+			a.recordAudit(r.Context(), user.ID, audit.ActionSessionDelete, audit.TargetTypeSession, id, nil)
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (a *API) recordAudit(ctx context.Context, actorUserID, action, targetType, targetID string, meta map[string]any) {
-	if a.Manager.Audit == nil || actorUserID == "" {
+func (a *API) recordAudit(ctx context.Context, actorUserID string, action audit.Action, targetType audit.TargetType, targetID string, meta map[string]any) {
+	if a.Manager == nil {
+		return
+	}
+	rec := a.Manager.Auditor()
+	if rec == nil || actorUserID == "" {
 		return
 	}
 	actorID := actorUserID
-	a.Manager.Audit.Record(ctx, store.AuditEvent{
+	rec.Record(ctx, store.AuditEvent{
 		ActorUserID: &actorID,
 		Action:      action,
 		TargetType:  targetType,
@@ -128,10 +133,10 @@ func (a *API) recordAudit(ctx context.Context, actorUserID, action, targetType, 
 }
 
 func (a *API) warn(ctx context.Context, msg string, attrs ...slog.Attr) {
-	if a.Manager == nil || a.Manager.Logger == nil {
+	if a.Manager == nil || a.Manager.logger == nil {
 		return
 	}
-	a.Manager.Logger.LogAttrs(ctx, slog.LevelWarn, msg, attrs...)
+	a.Manager.logger.LogAttrs(ctx, slog.LevelWarn, msg, attrs...)
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

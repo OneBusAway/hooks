@@ -49,31 +49,54 @@ func (r *SQLRecorder) Record(ctx context.Context, e store.AuditEvent) {
 	}
 	if err := r.Store.Insert(ctx, e); err != nil && r.Logger != nil {
 		r.Logger.WarnContext(ctx, "audit recorder insert failed",
-			slog.String("action", e.Action),
-			slog.String("target_type", e.TargetType),
+			slog.String("action", string(e.Action)),
+			slog.String("target_type", string(e.TargetType)),
 			slog.String("target_id", e.TargetID),
 			slog.Any("err", err),
 		)
 	}
 }
 
+// Action and TargetType are typed string aliases for the corresponding
+// store.AuditEvent fields. The Action* and TargetType* constants below
+// are the closed set; a raw string assignment from a handler stops
+// compiling without an explicit conversion. The underlying types live
+// in internal/store to avoid an import cycle (audit imports store).
+type (
+	Action     = store.AuditAction
+	TargetType = store.AuditTargetType
+)
+
 // Action constants — collected here so handlers don't sprinkle string
 // literals.
 const (
-	ActionInviteCreate         = "invite.create"
-	ActionInviteRevoke         = "invite.revoke"
-	ActionInviteConsume        = "invite.consume"
-	ActionUserCreate           = "user.create"
-	ActionUserDeactivate       = "user.deactivate"
-	ActionUserReactivate       = "user.reactivate"
-	ActionUserRoleChange       = "user.role_change"
-	ActionUserUpdate           = "user.update"
-	ActionUserPasswordReset    = "user.password_reset"
-	ActionTokenTransferOwner   = "token.transfer_owner"
-	ActionSubscriptionTransferOwner = "subscription.transfer_owner"
-	ActionSessionCreate        = "session.create"
-	ActionSessionDelete        = "session.delete"
-	ActionDevicePairingStart   = "device_pairing.start"
-	ActionDevicePairingApprove = "device_pairing.approve"
-	ActionDevicePairingDeny    = "device_pairing.deny"
+	ActionInviteCreate              Action = "invite.create"
+	ActionInviteRevoke              Action = "invite.revoke"
+	ActionInviteConsume             Action = "invite.consume"
+	ActionUserCreate                Action = "user.create"
+	ActionUserDeactivate            Action = "user.deactivate"
+	ActionUserReactivate            Action = "user.reactivate"
+	ActionUserRoleChange            Action = "user.role_change"
+	ActionUserUpdate                Action = "user.update"
+	ActionUserPasswordReset         Action = "user.password_reset"
+	ActionTokenCreate               Action = "token.create"
+	ActionTokenRevoke               Action = "token.revoke"
+	ActionTokenTransferOwner        Action = "token.transfer_owner"
+	ActionSubscriptionTransferOwner Action = "subscription.transfer_owner"
+	ActionSessionCreate             Action = "session.create"
+	ActionSessionDelete             Action = "session.delete"
+	ActionDevicePairingStart        Action = "device_pairing.start"
+	ActionDevicePairingApprove      Action = "device_pairing.approve"
+	ActionDevicePairingDeny         Action = "device_pairing.deny"
+)
+
+// TargetType constants — every audit-event row's TargetType is one of
+// these.
+const (
+	TargetTypeUser             TargetType = "user"
+	TargetTypeSession          TargetType = "session"
+	TargetTypeInvite           TargetType = "invite"
+	TargetTypeToken            TargetType = "token"
+	TargetTypePushSubscription TargetType = "push_subscription"
+	TargetTypeDevicePairing    TargetType = "device_pairing"
 )

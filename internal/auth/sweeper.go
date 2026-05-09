@@ -21,7 +21,7 @@ func (m *Manager) RunSweeper(ctx context.Context, logger *slog.Logger) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			n, err := m.Sessions.DeleteExpired(ctx, m.Now().UTC())
+			n, err := m.sessions.DeleteExpired(ctx, m.now().UTC())
 			if err != nil {
 				if logger != nil {
 					logger.WarnContext(ctx, "session sweeper error", slog.Any("err", err))

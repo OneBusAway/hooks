@@ -25,8 +25,8 @@ func auditToView(e store.AuditEvent) auditView {
 		ID: e.ID, At: e.At,
 		ActorUserID:  e.ActorUserID,
 		ActorTokenID: e.ActorTokenID,
-		Action:       e.Action,
-		TargetType:   e.TargetType,
+		Action:       string(e.Action),
+		TargetType:   string(e.TargetType),
 		TargetID:     e.TargetID,
 		Metadata:     e.Metadata,
 	}

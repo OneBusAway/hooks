@@ -181,7 +181,7 @@ func (a *API) Start(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 		return
 	}
-	a.recordAudit(r.Context(), nil, audit.ActionDevicePairingStart, "device_pairing", deviceCode, map[string]any{
+	a.recordAudit(r.Context(), nil, audit.ActionDevicePairingStart, audit.TargetTypeDevicePairing, deviceCode, map[string]any{
 		"user_code": userCode,
 		"scopes":    req.Scopes,
 	})
@@ -409,7 +409,7 @@ func (a *API) ApproveCore(ctx context.Context, caller store.User, userCode strin
 		)
 		return err
 	}
-	a.recordAudit(ctx, &caller.ID, audit.ActionDevicePairingApprove, "device_pairing", dp.DeviceCode, map[string]any{
+	a.recordAudit(ctx, &caller.ID, audit.ActionDevicePairingApprove, audit.TargetTypeDevicePairing, dp.DeviceCode, map[string]any{
 		"granted_scopes": grantedScopes,
 		"token_id":       tok.ID,
 	})
@@ -489,7 +489,7 @@ func (a *API) DenyCore(ctx context.Context, caller store.User, userCode string) 
 		a.warn(ctx, "device-pairing deny: failed", slog.Any("err", err))
 		return err
 	}
-	a.recordAudit(ctx, &caller.ID, audit.ActionDevicePairingDeny, "device_pairing", userCode, nil)
+	a.recordAudit(ctx, &caller.ID, audit.ActionDevicePairingDeny, audit.TargetTypeDevicePairing, userCode, nil)
 	return nil
 }
 
@@ -568,7 +568,7 @@ func derefString(p *string) string {
 	return *p
 }
 
-func (a *API) recordAudit(ctx context.Context, actor *string, action, targetType, targetID string, meta map[string]any) {
+func (a *API) recordAudit(ctx context.Context, actor *string, action audit.Action, targetType audit.TargetType, targetID string, meta map[string]any) {
 	if a.Audit == nil {
 		return
 	}

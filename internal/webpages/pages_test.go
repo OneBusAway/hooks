@@ -42,7 +42,7 @@ func newFixture(t *testing.T) *fixture {
 
 	mgr := auth.NewManager(st.Sessions(), st.Users(), audit.New(st.Audit(), nil),
 		auth.CookieOptions{TTL: time.Hour})
-	mgr.Logger = slog.New(slog.DiscardHandler)
+	mgr.SetLogger(slog.New(slog.DiscardHandler))
 
 	signup := DefaultSignupFunc(st.Invites(), st.Users(), audit.New(st.Audit(), nil))
 	pages, err := New(mgr, signup, slog.New(slog.DiscardHandler))
