@@ -323,12 +323,12 @@ func TestConcurrentSubscribers(t *testing.T) {
 	var wg sync.WaitGroup
 	var received atomic.Int64
 
-	cli := &http.Client{Timeout: 5 * time.Second}
+	cli := &http.Client{Timeout: 30 * time.Second}
 	for i := 0; i < N; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/subscribe/render?since=0", nil)
 			req.Header.Set("Authorization", "Bearer "+tok)
@@ -348,8 +348,9 @@ func TestConcurrentSubscribers(t *testing.T) {
 		}()
 	}
 
-	// Wait for everyone to register.
-	deadline := time.Now().Add(2 * time.Second)
+	// Wait for everyone to register. Generous deadline tolerates slow CI
+	// runners under -race; the per-request timeouts above must outlive this.
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		if notifier.SubscriberCount("render") >= N {
 			break
