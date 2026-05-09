@@ -7,43 +7,19 @@ package me
 
 import "github.com/onebusaway/hooks/internal/store"
 
-// adminAllScopes is the sentinel returned by HeldScopes for admin users;
-// SubsetOf treats it as "any scope satisfies."
-const adminAllScopes = "*"
-
 // HeldScopes returns the scope set caller may use as parents when minting
 // tokens or registering subscriptions. Admins implicitly hold every
 // scope; non-admin users hold their default_scopes plus the implicit
-// account scope.
+// account scope. Thin wrapper around store.HeldByUser so call sites in
+// the me package read consistently.
 func HeldScopes(u store.User) []string {
-	if u.Role == store.RoleAdmin {
-		return []string{adminAllScopes}
-	}
-	out := append([]string{}, u.DefaultScopes...)
-	if !store.HasScope(out, store.ScopeAccount) {
-		out = append(out, store.ScopeAccount)
-	}
-	return out
+	return []string(store.HeldByUser(u))
 }
 
 // SubsetOf reports whether every element of need is present in have. The
-// "*" sentinel in have grants everything.
+// store.ScopeAll sentinel in have grants everything.
 func SubsetOf(need, have []string) bool {
-	for _, h := range have {
-		if h == adminAllScopes {
-			return true
-		}
-	}
-	hs := map[string]bool{}
-	for _, h := range have {
-		hs[h] = true
-	}
-	for _, n := range need {
-		if !hs[n] {
-			return false
-		}
-	}
-	return true
+	return store.Scopes(need).SubsetOf(store.Scopes(have))
 }
 
 // Normalize trims duplicates while preserving order; empty entries are
@@ -63,8 +39,5 @@ func Normalize(in []string) []string {
 
 // EnsureAccount appends the account scope if absent. Used by PAT mint.
 func EnsureAccount(scopes []string) []string {
-	if store.HasScope(scopes, store.ScopeAccount) {
-		return scopes
-	}
-	return append(scopes, store.ScopeAccount)
+	return []string(store.Scopes(scopes).With(store.ScopeAccount))
 }

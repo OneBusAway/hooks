@@ -377,11 +377,11 @@ func (a *API) ApproveCore(ctx context.Context, caller store.User, userCode strin
 	if len(grantedScopes) == 0 {
 		grantedScopes = append([]string{}, dp.RequestedScopes...)
 	}
-	if !subset(grantedScopes, dp.RequestedScopes) {
+	granted := store.Scopes(grantedScopes)
+	if !granted.SubsetOf(store.Scopes(dp.RequestedScopes)) {
 		return ErrApproveScopesExceedRequested
 	}
-	heldScopes := userHeldScopes(caller)
-	if !subset(grantedScopes, heldScopes) {
+	if !granted.SubsetOf(store.HeldByUser(caller)) {
 		return ErrApproveScopesExceedAuthority
 	}
 
@@ -516,47 +516,6 @@ func (a *API) RunSweeper(ctx context.Context, interval time.Duration) {
 			}
 		}
 	}
-}
-
-// userHeldScopes returns the scope set the caller may request on a PAT.
-// Admins implicitly hold every source scope plus admin; non-admin users
-// hold default_scopes plus implicit account.
-func userHeldScopes(u store.User) []string {
-	if u.Role == store.RoleAdmin {
-		return []string{"*"} // sentinel: admin-implicit-everything
-	}
-	out := append([]string{}, u.DefaultScopes...)
-	hasAccount := false
-	for _, s := range out {
-		if s == store.ScopeAccount {
-			hasAccount = true
-			break
-		}
-	}
-	if !hasAccount {
-		out = append(out, store.ScopeAccount)
-	}
-	return out
-}
-
-// subset reports whether each element of need is present in have. The
-// "*" sentinel in have grants everything.
-func subset(need, have []string) bool {
-	for _, h := range have {
-		if h == "*" {
-			return true
-		}
-	}
-	hs := map[string]bool{}
-	for _, h := range have {
-		hs[h] = true
-	}
-	for _, n := range need {
-		if !hs[n] {
-			return false
-		}
-	}
-	return true
 }
 
 func clientIP(r *http.Request) string { return ratelimit.KeyByIP(r) }

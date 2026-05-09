@@ -215,7 +215,7 @@ on their own.
 
 - [x] 17.1 Unexport `auth.Manager.{Sessions, Users, Audit, Cookies}`; `Manager{}` with nil deps currently compiles and crashes on first use. Force `NewManager` as the only constructor.
 - [x] 17.2 Type `AuditEvent.Action` and `AuditEvent.TargetType` as named string aliases so the `audit.Action*` constants form a closed set the type system understands.
-- [ ] 17.3 Introduce `type Scopes []string` with `Has`, `With`, `Equal` methods. Centralizes the implicit-`account`-scope injection that's currently duplicated between `userHeldScopes` (`devicepair/api.go:364`) and the (deferred) `/api/me/tokens` mint path.
+- [x] 17.3 Introduce `type Scopes []string` with `Has`, `With`, `Equal` methods. Centralizes the implicit-`account`-scope injection that's currently duplicated between `userHeldScopes` (`devicepair/api.go:364`) and the (deferred) `/api/me/tokens` mint path.
 - [x] 17.4 Consolidate client-IP extraction into `ratelimit.KeyByIP`-shape helper (uses `net.SplitHostPort` correctly and handles bracketed IPv6); replace the manual reverse-loop in `auth/handlers.go:128-140` and `devicepair/api.go:402-413`.
 - [x] 17.5 Add a `CountUsers :one` query and use it in `cmd/hooks init` instead of materializing `ListUsers()` to test emptiness. Trivial today; matters once a deployment has thousands of users.
 - [x] 17.6 Drop the dead `signupTxer` interface block in `internal/invites/api.go:243-254` (the `_ = tx` no-op assignment) — only the second declaration is live.
