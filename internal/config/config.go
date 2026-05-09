@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -143,8 +144,12 @@ func Parse(data []byte, registry VerifierRegistry) (*Config, error) {
 		return nil, errors.New("config: `tokens:` is not allowed in hooks.yaml — listener tokens live in the database (manage them with `hooksctl token`)")
 	}
 
+	portAddr, err := listenAddrFromPort()
+	if err != nil {
+		return nil, err
+	}
 	cfg := &Config{
-		ListenAddr:    firstNonEmpty(raw.ListenAddr, DefaultListenAddr),
+		ListenAddr:    firstNonEmpty(raw.ListenAddr, portAddr, DefaultListenAddr),
 		DatabaseURL:   firstNonEmpty(raw.DatabaseURL, DefaultDatabaseURL),
 		LogLevel:      firstNonEmpty(raw.LogLevel, DefaultLogLevel),
 		BodySizeLimit: DefaultBodySizeLimit,
@@ -331,6 +336,23 @@ func parseSize(in string) (int64, error) {
 		return 0, fmt.Errorf("invalid size %q: %w", in, err)
 	}
 	return n, nil
+}
+
+// listenAddrFromPort honors $PORT (injected by Render/Heroku/Fly/Cloud Run)
+// when no explicit listen addr is configured. Returns "" when PORT is unset
+// (the common non-PaaS case), and an error when PORT is set but unparseable —
+// silently demoting an operator's typo to :8080 hides "service unreachable"
+// failures behind a default that PaaS load balancers can't reach.
+func listenAddrFromPort() (string, error) {
+	v := os.Getenv("PORT")
+	if v == "" {
+		return "", nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 || n > 65535 {
+		return "", fmt.Errorf("PORT=%q is not a valid TCP port (1-65535)", v)
+	}
+	return ":" + v, nil
 }
 
 func firstNonEmpty(values ...string) string {
