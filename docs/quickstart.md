@@ -89,15 +89,10 @@ A Dockerfile-level `HEALTHCHECK` polls `/healthz`; in front of a load balancer, 
 
 The repo also includes a `render.yaml` Blueprint. To deploy:
 
-1. Push (or fork) this repo to GitHub, then in Render: **New → Blueprint** and select the repo. Render reads `render.yaml` and provisions a Docker web service plus a 1 GiB persistent disk mounted at `/data`.
-2. After the first deploy, in the service's **Environment** tab set:
-    - `RENDER_WEBHOOK_SECRET` — the per-webhook signing secret Render gave you when you created the webhook in step 5 below.
-    - `HOOKS_PUBLIC_URL` — your service's external URL, e.g. `https://hooks-abc1.onrender.com`. Used to build the bootstrap signup link and device-pairing pages.
-3. Open a shell into the service (Render dashboard → **Shell**) and bootstrap:
-    ```sh
-    hooks init --server-url "$HOOKS_PUBLIC_URL"
-    ```
-   Save the printed admin token and bootstrap signup URL. Restart the service so it picks up the new DB.
+1. In Render: **New → Blueprint** and select this repo (fork first if you want autoDeploy on your own pushes). Render reads `render.yaml` and provisions a Docker web service plus a 1 GiB persistent disk mounted at `/data`. Before the first deploy, set the two `sync: false` env vars in the service's **Environment** tab:
+    - `RENDER_WEBHOOK_SECRET` — the per-webhook signing secret Render gives you when you create the webhook in step 5 below. (Use a placeholder for now and rotate it once the webhook exists.)
+    - `HOOKS_PUBLIC_URL` — your service's external URL, e.g. `https://hooks-abc1.onrender.com`. Used to build the bootstrap signup link printed during first-boot init.
+2. Trigger a deploy. The container's entrypoint detects an empty `/data`, runs `hooks init --dir /data` automatically, and prints the one-time admin token plus the bootstrap signup URL to the service **Logs**. Copy both from the log lines (treat them as secrets — the token is shown only once). The server then starts normally.
 
 The server honors `$PORT` (which Render injects) automatically, so the Blueprint only wires `/readyz` as the health check — no listen-address knob to keep in sync. Both `hooks` and `hooksctl` are on `$PATH` in the shell, so token rotation, push subscription management, and pruning all work without leaving Render.
 
@@ -105,7 +100,7 @@ The server honors `$PORT` (which Render injects) automatically, so the Blueprint
 
 Open the bootstrap signup URL from step 2 in a browser. Pick an email, name, and password (≥ 12 characters; must not contain your email or its local-part). Submitting the form consumes the bootstrap invite, signs you into the inspector at `/inspector`, and the URL returns 409 from then on.
 
-If the link expires before you use it, re-run `hooks init` against the still-empty DB to mint a fresh 24-hour invite. Once any user exists, the bootstrap path is closed — invite teammates from `/inspector/users` (or `POST /api/invites`) instead.
+If the link expires before you use it, open the service's **Shell** (now available since the deploy is healthy) and re-run `hooks init --force --server-url "$HOOKS_PUBLIC_URL"` to mint a fresh 24-hour invite. Once any user exists, the bootstrap path is closed — invite teammates from `/inspector/users` (or `POST /api/invites`) instead.
 
 ## 5. Register the webhook with Render
 

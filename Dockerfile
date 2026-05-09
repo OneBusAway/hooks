@@ -47,6 +47,7 @@ RUN apk add --no-cache ca-certificates \
 
 COPY --from=builder /out/hooks    /usr/local/bin/hooks
 COPY --from=builder /out/hooksctl /usr/local/bin/hooksctl
+COPY --chmod=0755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 USER hooks
 WORKDIR /data
@@ -64,4 +65,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD wget -qO- "http://127.0.0.1${HOOKS_LISTEN_ADDR:-:8080}/healthz" >/dev/null 2>&1 || exit 1
 
-ENTRYPOINT ["/usr/local/bin/hooks"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
