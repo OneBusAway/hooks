@@ -180,6 +180,58 @@ func TestImageInitScaffold(t *testing.T) {
 	}
 }
 
+// TestImageFirstBootAutoInit boots the server against an empty /data with no
+// prior `hooks init` and verifies the entrypoint scaffolds hooks.yaml +
+// hooks.db, prints the one-time admin token, and reaches /healthz. Models the
+// "fresh Render Blueprint deploy on an empty persistent disk" scenario where
+// the operator can't shell in to run init manually because the service hasn't
+// reached a healthy state yet.
+//
+// We capture container logs (which will contain the admin token) and never
+// echo them — only check token-shape via extractAdminToken, then redact
+// before any t.Fatalf.
+func TestImageFirstBootAutoInit(t *testing.T) {
+	skipIfNoDocker(t)
+
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o777); err != nil {
+		t.Fatalf("chmod tempdir: %v", err)
+	}
+
+	containerName := fmt.Sprintf("hooks-dockertest-fb-%d", time.Now().UnixNano())
+	out, err := exec.Command("docker", "run", "-d", "--rm",
+		"--name", containerName,
+		"-v", dir+":/data",
+		"-e", "RENDER_WEBHOOK_SECRET=stub-for-tests",
+		"-p", "0:8080",
+		imageTag,
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker run: %v\n%s", err, out)
+	}
+	t.Cleanup(func() { cleanupContainer(t, containerName) })
+
+	addr := "http://127.0.0.1:" + hostPort(t, containerName, "8080/tcp")
+	if err := waitForHealthz(addr, 60*time.Second); err != nil {
+		// Logs may contain the admin token from auto-init; never echo raw.
+		t.Fatalf("/healthz never returned 200: %v (logs redacted: may contain admin token)", err)
+	}
+
+	for _, name := range []string{"hooks.yaml", "hooks.db"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Fatalf("expected %s in /data after first-boot auto-init: %v", name, err)
+		}
+	}
+
+	logs := dockerLogs(containerName)
+	token := extractAdminToken([]byte(logs))
+	if token == "" {
+		// Don't echo logs — first-boot init may have printed the token even
+		// if our parser missed it.
+		t.Fatal("first-boot did not print an admin-token line (logs redacted)")
+	}
+}
+
 func TestImageServesHealthEndpoints(t *testing.T) {
 	skipIfNoDocker(t)
 	dir := scaffoldDataDir(t)
