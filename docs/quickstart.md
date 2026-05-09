@@ -99,7 +99,7 @@ The repo also includes a `render.yaml` Blueprint. To deploy:
     ```
    Save the printed admin token and bootstrap signup URL. Restart the service so it picks up the new DB.
 
-The Blueprint pins `HOOKS_LISTEN_ADDR=:10000` to match Render's Docker `PORT` default and wires `/readyz` as the health check. Both `hooks` and `hooksctl` are on `$PATH` in the shell, so token rotation, push subscription management, and pruning all work without leaving Render.
+The server honors `$PORT` (which Render injects) automatically, so the Blueprint only wires `/readyz` as the health check — no listen-address knob to keep in sync. Both `hooks` and `hooksctl` are on `$PATH` in the shell, so token rotation, push subscription management, and pruning all work without leaving Render.
 
 ## 4. Claim the first admin account
 

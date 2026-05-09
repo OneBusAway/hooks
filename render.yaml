@@ -17,10 +17,8 @@ services:
     envVars:
       - key: HOOKS_DATABASE_URL
         value: /data/hooks.db
-      # Render's Docker runtime injects PORT=10000; bind to it so the
-      # platform's load balancer can reach us.
-      - key: HOOKS_LISTEN_ADDR
-        value: :10000
+      # No HOOKS_LISTEN_ADDR: hooks honors $PORT (which Render injects)
+      # so the platform's load balancer can reach us.
       - key: HOOKS_PUBLIC_URL
         sync: false
       - key: RENDER_WEBHOOK_SECRET

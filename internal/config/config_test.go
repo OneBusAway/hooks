@@ -142,6 +142,49 @@ sources:
 	}
 }
 
+func TestListenAddrPrecedence(t *testing.T) {
+	cases := []struct {
+		name        string
+		hooksListen string // HOOKS_LISTEN_ADDR; "" treated as unset
+		port        string // PORT; "" treated as unset
+		yamlListen  string // listen_addr in yaml; "" means omit
+		want        string // expected ListenAddr; ignored when wantErr is set
+		wantErr     string // substring expected in Parse error; "" means no error
+	}{
+		{name: "port honored when nothing else set", port: "10000", want: ":10000"},
+		{name: "yaml beats port", port: "10000", yamlListen: ":7777", want: ":7777"},
+		{name: "HOOKS_LISTEN_ADDR beats port", hooksListen: ":9090", port: "10000", want: ":9090"},
+		{name: "HOOKS_LISTEN_ADDR beats yaml", hooksListen: ":9090", yamlListen: ":7777", want: ":9090"},
+		{name: "unset everywhere falls back to default", want: DefaultListenAddr},
+		{name: "non-numeric port errors", port: "not-a-number", wantErr: "PORT="},
+		{name: "out-of-range port errors", port: "70000", wantErr: "PORT="},
+		{name: "port 0 errors", port: "0", wantErr: "PORT="},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HOOKS_LISTEN_ADDR", tc.hooksListen)
+			t.Setenv("PORT", tc.port)
+			yaml := "sources:\n  render:\n    verifier: render\n    secret: x\n"
+			if tc.yamlListen != "" {
+				yaml = "listen_addr: \"" + tc.yamlListen + "\"\n" + yaml
+			}
+			cfg, err := Parse([]byte(yaml), newRegistry("render"))
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			if cfg.ListenAddr != tc.want {
+				t.Fatalf("ListenAddr = %q, want %q", cfg.ListenAddr, tc.want)
+			}
+		})
+	}
+}
+
 func TestPerSourceOverrides(t *testing.T) {
 	yaml := `
 body_size_limit: 1MiB
