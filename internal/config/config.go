@@ -18,12 +18,12 @@ import (
 
 // Defaults applied when omitted from YAML or env.
 const (
-	DefaultListenAddr     = ":8080"
-	DefaultDatabaseURL    = "./hooks.db"
-	DefaultLogLevel       = "info"
-	DefaultBodySizeLimit  = 1 << 20 // 1 MiB
-	DefaultDedupeWindow   = 24 * time.Hour
-	DefaultSkewWindow     = 5 * time.Minute
+	DefaultListenAddr      = ":8080"
+	DefaultDatabaseURL     = "./hooks.db"
+	DefaultLogLevel        = "info"
+	DefaultBodySizeLimit   = 1 << 20 // 1 MiB
+	DefaultDedupeWindow    = 24 * time.Hour
+	DefaultSkewWindow      = 5 * time.Minute
 	DefaultSourceRetention = 30 * 24 * time.Hour
 )
 
@@ -82,15 +82,15 @@ type Config struct {
 
 // rawConfig mirrors the on-disk YAML schema.
 type rawConfig struct {
-	ListenAddr    string                  `yaml:"listen_addr"`
-	DatabaseURL   string                  `yaml:"database_url"`
-	LogLevel      string                  `yaml:"log_level"`
-	BodySizeLimit string                  `yaml:"body_size_limit"`
-	DedupeWindow  string                  `yaml:"dedupe_window"`
-	SkewWindow    string                  `yaml:"skew_window"`
-	Web           rawWeb                  `yaml:"web"`
-	Sources       map[string]rawSource    `yaml:"sources"`
-	Tokens        any                     `yaml:"tokens"` // forbidden; presence => error
+	ListenAddr    string               `yaml:"listen_addr"`
+	DatabaseURL   string               `yaml:"database_url"`
+	LogLevel      string               `yaml:"log_level"`
+	BodySizeLimit string               `yaml:"body_size_limit"`
+	DedupeWindow  string               `yaml:"dedupe_window"`
+	SkewWindow    string               `yaml:"skew_window"`
+	Web           rawWeb               `yaml:"web"`
+	Sources       map[string]rawSource `yaml:"sources"`
+	Tokens        any                  `yaml:"tokens"` // forbidden; presence => error
 }
 
 type rawWeb struct {

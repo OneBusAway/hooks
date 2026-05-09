@@ -70,9 +70,9 @@ func cmdReplay(g globals, args []string) int {
 	}
 
 	var p struct {
-		Headers map[string]string `json:"headers"`
-		Body    string            `json:"body"`
-		DeliveryID string         `json:"delivery_id"`
+		Headers    map[string]string `json:"headers"`
+		Body       string            `json:"body"`
+		DeliveryID string            `json:"delivery_id"`
 	}
 	if err := json.Unmarshal([]byte(current["data"]), &p); err != nil {
 		fmt.Fprintln(os.Stderr, "decode:", err)

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -111,7 +112,10 @@ func TestPoll_MarkFetchedFailure_LogsWarn(t *testing.T) {
 	api := NewAPI(s, fakeAuth{}, nil, "")
 	wrap := &markFetchedFailingStore{DevicePairingStore: api.Pairings}
 	api.Pairings = wrap
-	logBuf := &bytes.Buffer{}
+	// The deferred MarkFetched goroutine writes to the buffer concurrently
+	// with the test's polling reads; bytes.Buffer is not goroutine-safe, so
+	// serialize through a mutex-wrapped writer.
+	logBuf := newSyncBuffer()
 	api.Logger = slog.New(slog.NewTextHandler(logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	mux := http.NewServeMux()
@@ -143,4 +147,31 @@ func TestPoll_MarkFetchedFailure_LogsWarn(t *testing.T) {
 	if !strings.Contains(logBuf.String(), "mark-fetched") {
 		t.Errorf("expected mark-fetched-failure warn log, got: %q", logBuf.String())
 	}
+}
+
+// syncBuffer is a goroutine-safe bytes.Buffer wrapper for tests that
+// observe slog output written from a background goroutine.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func newSyncBuffer() *syncBuffer { return &syncBuffer{} }
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) Len() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Len()
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }

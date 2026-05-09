@@ -301,9 +301,9 @@ func TestMeSubList_PrintsTable(t *testing.T) {
 
 func TestMeSubAction_HitsCorrectEndpoint(t *testing.T) {
 	cases := []struct {
-		args     []string
-		method   string
-		path     string
+		args   []string
+		method string
+		path   string
 	}{
 		{[]string{"sub", "pause", "sub-1"}, http.MethodPost, "/api/me/subscriptions/sub-1/pause"},
 		{[]string{"sub", "resume", "sub-1"}, http.MethodPost, "/api/me/subscriptions/sub-1/resume"},

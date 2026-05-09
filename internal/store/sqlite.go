@@ -141,13 +141,6 @@ func nullStringPtr(s *string) sql.NullString {
 	return sql.NullString{String: *s, Valid: true}
 }
 
-func nullStringFrom(s string) sql.NullString {
-	if s == "" {
-		return sql.NullString{}
-	}
-	return sql.NullString{String: s, Valid: true}
-}
-
 func ptrFromNullString(v sql.NullString) *string {
 	if !v.Valid {
 		return nil
@@ -318,13 +311,13 @@ func (s *SQLite) SetLogger(l *slog.Logger) {
 
 func tokenFromGen(r sqlcgen.ListenerToken) Token {
 	t := Token{
-		ID:         r.ID,
-		Name:       r.Name,
-		Scopes:     splitScopes(r.Scopes),
-		SecretHash: r.SecretHash,
-		CreatedAt:  time.Unix(0, r.CreatedAt).UTC(),
-		LastUsedAt: timePtrFromNullInt64(r.LastUsedAt),
-		RevokedAt:  timePtrFromNullInt64(r.RevokedAt),
+		ID:          r.ID,
+		Name:        r.Name,
+		Scopes:      splitScopes(r.Scopes),
+		SecretHash:  r.SecretHash,
+		CreatedAt:   time.Unix(0, r.CreatedAt).UTC(),
+		LastUsedAt:  timePtrFromNullInt64(r.LastUsedAt),
+		RevokedAt:   timePtrFromNullInt64(r.RevokedAt),
 		OwnerUserID: ptrFromNullString(r.OwnerUserID),
 		Kind:        TokenKind(r.Kind),
 		Ephemeral:   r.Ephemeral != 0,

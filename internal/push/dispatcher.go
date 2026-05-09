@@ -61,8 +61,8 @@ type Manager struct {
 	BatchSize int
 
 	mu      sync.Mutex
-	workers map[string]*worker  // id → worker
-	secrets map[string]string   // id → plaintext signing secret
+	workers map[string]*worker // id → worker
+	secrets map[string]string  // id → plaintext signing secret
 	// rng is owned by the manager but only read by workers under mu, so a
 	// shared instance is fine here.
 	rng *rand.Rand
@@ -192,8 +192,8 @@ func (m *Manager) Test(ctx context.Context, id string) error {
 	body := []byte(`{"test":true}`)
 	deliveryID := "test-" + strconv.FormatInt(m.Now().UnixNano(), 36)
 	req, err := buildOutboundRequest(ctx, sub, plaintext, deliveryID, 0, body, map[string]string{
-		"Content-Type":  "application/json",
-		"X-Hooks-Test":  "1",
+		"Content-Type": "application/json",
+		"X-Hooks-Test": "1",
 	}, m.Now)
 	if err != nil {
 		return err

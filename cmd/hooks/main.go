@@ -48,7 +48,7 @@ func main() {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprint(w, `hooks: durable webhook relay
+	_, _ = fmt.Fprint(w, `hooks: durable webhook relay
 
 Usage:
   hooks                       run the server (defaults from hooks.yaml)
@@ -137,13 +137,15 @@ func printDevQuickstart(srv *server.Server) {
 
 func openBrowser(url string) {
 	var cmd *exec.Cmd
+	// G204: the URL is built from `--listen` flag in `hooks --dev` mode only;
+	// it's the operator's own machine and the OS-specific helper handles quoting.
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("open", url)
+		cmd = exec.Command("open", url) //nolint:gosec
 	case "linux":
-		cmd = exec.Command("xdg-open", url)
+		cmd = exec.Command("xdg-open", url) //nolint:gosec
 	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url) //nolint:gosec
 	default:
 		return
 	}

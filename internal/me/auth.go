@@ -29,10 +29,10 @@ func (c Caller) IsPAT() bool { return c.Token != nil }
 
 // errors used internally; the handler maps them to HTTP statuses via writeAuthErr.
 var (
-	errAnonymous     = errors.New("me: unauthenticated")
-	errKindMismatch  = errors.New("me: listener tokens cannot reach /api/me")
-	errOwnerless     = errors.New("me: token has no owning user")
-	errDeactivated   = errors.New("me: account deactivated")
+	errAnonymous    = errors.New("me: unauthenticated")
+	errKindMismatch = errors.New("me: listener tokens cannot reach /api/me")
+	errOwnerless    = errors.New("me: token has no owning user")
+	errDeactivated  = errors.New("me: account deactivated")
 )
 
 // resolveCaller extracts the calling user from r. Order:
@@ -78,7 +78,6 @@ func (a *API) resolveCaller(r *http.Request) (Caller, error) {
 	}
 	return Caller{User: user, Token: &tok}, nil
 }
-
 
 // writeAuthErr maps internal errors to the right HTTP code + JSON body.
 func writeAuthErr(w http.ResponseWriter, err error) {

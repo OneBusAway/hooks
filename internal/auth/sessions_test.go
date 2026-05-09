@@ -206,7 +206,9 @@ func TestLogin_DeactivatedUser_403(t *testing.T) {
 
 	body, _ := json.Marshal(loginRequest{Email: "bob@example.com", Password: "supercalifragilistic"})
 	resp, err := http.Post(srv.URL+"/api/auth/login", "application/json", bytes.NewReader(body))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status: %d", resp.StatusCode)
@@ -220,7 +222,7 @@ func TestLookup_ExpiredCookie_RejectedAndDeleted(t *testing.T) {
 	id := uuid.NewString()
 	expired := store.Session{
 		ID: id, UserID: u.ID, SecretHash: hashSessionSecret(plaintext),
-		CreatedAt: time.Now().Add(-2 * time.Hour),
+		CreatedAt:  time.Now().Add(-2 * time.Hour),
 		LastUsedAt: time.Now().Add(-2 * time.Hour),
 		ExpiresAt:  time.Now().Add(-time.Minute),
 	}
@@ -294,7 +296,9 @@ func TestLogout_DeletesRow_ExpiresCookie(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/auth/logout", nil)
 	req.AddCookie(&http.Cookie{Name: SessionCookie, Value: cookieValue})
 	resp, err := http.DefaultClient.Do(req)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("logout: %d", resp.StatusCode)
@@ -340,7 +344,9 @@ func TestLogout_DeletesRow_ExpiresCookie(t *testing.T) {
 	req, _ = http.NewRequest(http.MethodGet, srv.URL+"/probe", nil)
 	req.AddCookie(&http.Cookie{Name: SessionCookie, Value: cookieValue})
 	resp, err = http.DefaultClient.Do(req)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("reused cookie should not authenticate: %d", resp.StatusCode)

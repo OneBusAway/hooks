@@ -12,7 +12,7 @@ type LatestByCursor struct {
 	events interface {
 		LatestSequence(ctx context.Context, source string) (int64, error)
 	}
-	seen   map[string]int64
+	seen     map[string]int64
 	firstErr error
 }
 

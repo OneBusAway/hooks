@@ -255,4 +255,3 @@ func (a *API) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	a.recordAudit(r.Context(), caller, audit.ActionUserPasswordReset, audit.TargetTypeUser, id, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
-

@@ -22,8 +22,8 @@ func (e *PolicyError) Error() string { return "password policy: " + e.Reason }
 // Reasons surfaced to logs (never to API responses, which return a generic
 // "password does not meet policy" message).
 const (
-	ReasonTooShort       = "too short"
-	ReasonContainsEmail  = "contains email"
+	ReasonTooShort      = "too short"
+	ReasonContainsEmail = "contains email"
 )
 
 // ValidatePassword enforces the v1 password policy: length ≥ 12 codepoints

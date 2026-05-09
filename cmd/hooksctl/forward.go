@@ -256,7 +256,10 @@ func cursorFilePath(server, source string) (string, error) {
 		base = filepath.Join(home, ".local", "state")
 	}
 	dir := filepath.Join(base, "hooks")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	// G703: `base` is rooted at $XDG_STATE_HOME or $HOME/.local/state — the
+	// caller's own home directory; "traversal" is a non-issue for a CLI that
+	// already runs with the user's privileges.
+	if err := os.MkdirAll(dir, 0o700); err != nil { //nolint:gosec
 		return "", err
 	}
 	host := serverHost(server)
@@ -367,5 +370,3 @@ func revokeEphemeralListener(g globals, id string) {
 		fmt.Fprintf(os.Stderr, "forward: revoke ephemeral token: status %d\n", resp.StatusCode)
 	}
 }
-
-

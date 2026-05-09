@@ -248,8 +248,8 @@ func (s *SQLite) DeactivateUserCascade(ctx context.Context, id string, when time
 		return CascadeRevokeResult{}, err
 	}
 	return CascadeRevokeResult{
-		TokensRevoked:        tokRevoked,
-		SubscriptionsPaused:  subPaused,
+		TokensRevoked:       tokRevoked,
+		SubscriptionsPaused: subPaused,
 	}, nil
 }
 

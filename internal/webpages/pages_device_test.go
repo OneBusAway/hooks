@@ -375,7 +375,7 @@ func TestDevicePOST_Approve_PasswordVerifyFailure_RendersError(t *testing.T) {
 	f.approver.approveErr = devicepair.ErrApprovePasswordVerify
 	f.approver.lookupResult = store.DevicePairing{
 		UserCode: "ABCD-EFGH", Status: store.DevicePairingStatusPending,
-		ExpiresAt: time.Now().Add(time.Minute),
+		ExpiresAt:       time.Now().Add(time.Minute),
 		RequestedScopes: []string{"render"},
 	}
 
@@ -406,7 +406,7 @@ func TestDevicePOST_Approve_ScopesExceedAuthority_RendersError(t *testing.T) {
 	f.approver.approveErr = devicepair.ErrApproveScopesExceedAuthority
 	f.approver.lookupResult = store.DevicePairing{
 		UserCode: "ABCD-EFGH", Status: store.DevicePairingStatusPending,
-		ExpiresAt: time.Now().Add(time.Minute),
+		ExpiresAt:       time.Now().Add(time.Minute),
 		RequestedScopes: []string{"stripe"},
 	}
 

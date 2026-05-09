@@ -99,8 +99,6 @@ func readSSE(t *testing.T, body io.Reader) <-chan sseMessage {
 				msg.Event = strings.TrimPrefix(line, "event:")
 			case strings.HasPrefix(line, "data:"):
 				msg.Data = strings.TrimPrefix(line, "data:")
-			case strings.HasPrefix(line, ":"):
-				// keepalive comment; ignore
 			}
 		}
 	}()

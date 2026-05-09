@@ -27,6 +27,31 @@ linters:
           disabled: true
         - name: exported
           disabled: true
+    gosec:
+      # G101: false-positive on header-name string literals like "X-Hooks-CSRF".
+      # G124: cookie Secure flag is set conditionally by auth.Manager.cookieSecure
+      #   based on TLS detection / X-Forwarded-Proto; gosec can't follow that.
+      # G404: math/rand is fine for backoff jitter (non-cryptographic use).
+      # G704: push subscription target URLs are user-configured by design —
+      #   delivering to user-supplied URLs is the whole product.
+      # G710: open-redirect sites are gated by safeNext() / dest validation;
+      #   gosec cannot follow that flow.
+      excludes:
+        - G101
+        - G124
+        - G404
+        - G704
+        - G710
+  exclusions:
+    rules:
+      # Tests routinely ignore errors (response bodies in stub servers,
+      # JSON decodes whose only failure mode is a test bug, etc). Keeping
+      # these strict in tests is high-noise / low-signal.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - bodyclose
+          - gosec
 
 issues:
   max-issues-per-linter: 0

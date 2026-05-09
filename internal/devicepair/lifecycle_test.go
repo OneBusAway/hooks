@@ -280,4 +280,3 @@ func TestSweeper_ExpiresPendingAndDeletesTerminal(t *testing.T) {
 	cancel()
 	<-done
 }
-

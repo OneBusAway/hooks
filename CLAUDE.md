@@ -23,9 +23,9 @@ go test ./internal/store/...                          # one package
 go test ./internal/push -run TestDispatcher_Backoff   # one test
 ```
 
-CI (`.github/workflows/ci.yml`) runs `go vet ./...`, `go test ./...`, and `golangci-lint`. Match it locally before pushing.
+CI (`.github/workflows/ci.yml`) runs three jobs — `build`, `test` (`go vet ./...` + `go test -race ./...`), and `lint` (`make lint`, which runs `go vet`, `go tool sqlc diff`, and `go tool golangci-lint run`). All use `go-version-file: go.mod` so the runner matches what the module declares. Match it locally with `make lint && make test` before pushing.
 
-Go toolchain: `go.mod` pins `go 1.25.9`. SQLite driver is `modernc.org/sqlite` (pure Go — no cgo).
+Go toolchain: `go.mod` pins `go 1.26.0`. SQLite driver is `modernc.org/sqlite` (pure Go — no cgo). golangci-lint and sqlc are both declared as `tool` dependencies in `go.mod` so `go tool <name>` builds them with the project's Go toolchain — eliminates the "linter built with go1.X < target go1.Y" mismatch and keeps the version reproducible.
 
 ## Architecture
 
@@ -109,4 +109,4 @@ Cookie session secrets are 32 random bytes, hashed **SHA-256**. Bearer-token pla
 - **HTTP status discipline at `/ingest`:** 200 for duplicate (we already have it), 202 for newly accepted, 401 for verification failure, 413 for oversize, 404 for unknown source, 503 only for genuine store/transient failures so the provider retries.
 - **Health endpoints:** `/healthz` is liveness (always 200 when the listener is up). `/readyz` requires a successful SQLite ping — wire load balancers to `/readyz`.
 - **OpenSpec workflow** lives in `openspec/` and the `opsx:*` skills (propose / explore / apply / archive). Use it for non-trivial change planning.
-- **Linting** via golangci-lint v2 (`.golangci.yml`): `errcheck`, `govet`, `ineffassign`, `staticcheck`, `unused`, `gosec`, `misspell`, `bodyclose`, `errorlint`, `nilerr`, `revive`, plus `gofmt` + `goimports` formatters. `revive`'s `exported` and `package-comments` rules are disabled. `errorlint` is on, so wrap with `%w` and use `errors.Is`/`errors.As` rather than equality or type assertions.
+- **Linting** via golangci-lint v2 (`.golangci.yml`), invoked through `go tool golangci-lint` so the version is pinned by `go.mod`: `errcheck`, `govet`, `ineffassign`, `staticcheck`, `unused`, `gosec`, `misspell`, `bodyclose`, `errorlint`, `nilerr`, `revive`, plus `gofmt` + `goimports` formatters. `revive`'s `exported` and `package-comments` rules are disabled. `errorlint` is on, so wrap with `%w` and use `errors.Is`/`errors.As` rather than equality or type assertions. Test files (`*_test.go`) are exempt from `errcheck`, `bodyclose`, and `gosec` (test code routinely ignores stub-server return values). Several `gosec` rules are globally disabled with rationale in `.golangci.yml` (e.g. `G124` because cookie Secure-flag handling is conditional on TLS detection that gosec can't follow).

@@ -5,13 +5,14 @@
 // Adding a new source provider is three steps:
 //
 //  1. Create a new file under internal/sources/<name>.go (e.g. stripe.go).
+//
 //  2. Implement the Verifier interface for that provider's signing scheme:
 //
 //     - RequiredHeaders should list the headers your verifier reads from
-//       so the ingest layer can early-fail before parsing the body.
+//     so the ingest layer can early-fail before parsing the body.
 //     - Verify should return the provider-attested timestamp, the
-//       provider-supplied delivery_id (or a sha256 of the canonical signing
-//       string if the provider does not provide one), and an error.
+//     provider-supplied delivery_id (or a sha256 of the canonical signing
+//     string if the provider does not provide one), and an error.
 //
 //  3. Call sources.Register("<name>", factory) from an init() block so the
 //     config loader can resolve "verifier: <name>" entries at startup.

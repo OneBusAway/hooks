@@ -206,11 +206,11 @@ func TestLoadFromFile(t *testing.T) {
 
 func TestParseSize(t *testing.T) {
 	cases := map[string]int64{
-		"1024":  1024,
-		"1KiB":  1024,
-		"1MiB":  1 << 20,
-		"5MiB":  5 << 20,
-		"1MB":   1_000_000,
+		"1024": 1024,
+		"1KiB": 1024,
+		"1MiB": 1 << 20,
+		"5MiB": 5 << 20,
+		"1MB":  1_000_000,
 	}
 	for in, want := range cases {
 		got, err := parseSize(in)

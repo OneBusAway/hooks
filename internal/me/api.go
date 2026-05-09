@@ -23,12 +23,12 @@ const MaxTokenTTL = 365 * 24 * time.Hour
 // cookie (resolved by auth.Manager.Middleware) or a kind='pat' bearer
 // token; listener tokens are rejected with 403.
 type API struct {
-	Users   store.UserStore
-	Tokens  store.TokenStore
-	Subs    store.PushSubscriptionStore
-	Audit   audit.Recorder
-	Logger  *slog.Logger
-	Now     func() time.Time
+	Users  store.UserStore
+	Tokens store.TokenStore
+	Subs   store.PushSubscriptionStore
+	Audit  audit.Recorder
+	Logger *slog.Logger
+	Now    func() time.Time
 
 	// Auth is the cookie-session provider; nil disables session-based auth.
 	Auth SessionProvider

@@ -153,7 +153,9 @@ var (
 
 // IsAuthError reports whether err originated from token resolution and should
 // produce HTTP 401.
-func IsAuthError(err error) bool { return errors.Is(err, errInvalidToken) || errors.Is(err, errMissingToken) }
+func IsAuthError(err error) bool {
+	return errors.Is(err, errInvalidToken) || errors.Is(err, errMissingToken)
+}
 
 // IsForbidden reports whether err should produce HTTP 403.
 func IsForbidden(err error) bool { return errors.Is(err, errForbidden) }

@@ -63,7 +63,9 @@ func TestStart_Pending(t *testing.T) {
 
 	body, _ := json.Marshal(startRequest{Scopes: []string{"render"}})
 	resp, err := http.Post(srv.URL+"/api/auth/device/start", "application/json", bytes.NewReader(body))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("start: %d", resp.StatusCode)
@@ -87,7 +89,9 @@ func TestApprove_RequiresPasswordReentry(t *testing.T) {
 	// Start a pairing.
 	body, _ := json.Marshal(startRequest{Scopes: []string{"render"}})
 	resp, err := http.Post(srv.URL+"/api/auth/device/start", "application/json", bytes.NewReader(body))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	var sr startResponse
 	_ = json.NewDecoder(resp.Body).Decode(&sr)
 	resp.Body.Close()
@@ -95,7 +99,9 @@ func TestApprove_RequiresPasswordReentry(t *testing.T) {
 	// Approve with wrong password -> 401.
 	body, _ = json.Marshal(approveRequest{UserCode: sr.UserCode, Password: "wrong-password-1234", GrantedScopes: []string{"render"}})
 	resp, err = http.Post(srv.URL+"/api/auth/device/approve", "application/json", bytes.NewReader(body))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("wrong password: %d", resp.StatusCode)
@@ -104,7 +110,9 @@ func TestApprove_RequiresPasswordReentry(t *testing.T) {
 	// Approve with right password -> ok.
 	body, _ = json.Marshal(approveRequest{UserCode: sr.UserCode, Password: plaintext, GrantedScopes: []string{"render"}})
 	resp, err = http.Post(srv.URL+"/api/auth/device/approve", "application/json", bytes.NewReader(body))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("right password: %d", resp.StatusCode)
 	}
@@ -121,7 +129,9 @@ func TestApprove_WideningScopesRejected(t *testing.T) {
 
 	body, _ := json.Marshal(startRequest{Scopes: []string{"render"}})
 	resp, err := http.Post(srv.URL+"/api/auth/device/start", "application/json", bytes.NewReader(body))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	var sr startResponse
 	_ = json.NewDecoder(resp.Body).Decode(&sr)
 	resp.Body.Close()
@@ -133,7 +143,9 @@ func TestApprove_WideningScopesRejected(t *testing.T) {
 		GrantedScopes: []string{"render", "stripe"},
 	})
 	resp, err = http.Post(srv.URL+"/api/auth/device/approve", "application/json", bytes.NewReader(body))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("widening: %d", resp.StatusCode)
@@ -152,14 +164,18 @@ func TestApprove_ScopesUserDoesNotHold(t *testing.T) {
 	// CLI requests a scope user doesn't hold.
 	body, _ := json.Marshal(startRequest{Scopes: []string{"stripe"}})
 	resp, err := http.Post(srv.URL+"/api/auth/device/start", "application/json", bytes.NewReader(body))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	var sr startResponse
 	_ = json.NewDecoder(resp.Body).Decode(&sr)
 	resp.Body.Close()
 
 	body, _ = json.Marshal(approveRequest{UserCode: sr.UserCode, Password: plaintext, GrantedScopes: []string{"stripe"}})
 	resp, err = http.Post(srv.URL+"/api/auth/device/approve", "application/json", bytes.NewReader(body))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Errorf("status: %d", resp.StatusCode)
@@ -178,7 +194,9 @@ func TestPoll_StateTransitions(t *testing.T) {
 	// Start.
 	body, _ := json.Marshal(startRequest{Scopes: []string{"render"}})
 	resp, err := http.Post(srv.URL+"/api/auth/device/start", "application/json", bytes.NewReader(body))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	var sr startResponse
 	_ = json.NewDecoder(resp.Body).Decode(&sr)
 	resp.Body.Close()
@@ -186,7 +204,9 @@ func TestPoll_StateTransitions(t *testing.T) {
 	// Poll while pending -> 202.
 	body, _ = json.Marshal(pollRequest{DeviceCode: sr.DeviceCode})
 	resp, err = http.Post(srv.URL+"/api/auth/device/poll", "application/json", bytes.NewReader(body))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusAccepted {
 		t.Fatalf("pending poll: %d", resp.StatusCode)
@@ -195,13 +215,17 @@ func TestPoll_StateTransitions(t *testing.T) {
 	// Approve.
 	body, _ = json.Marshal(approveRequest{UserCode: sr.UserCode, Password: plaintext, GrantedScopes: []string{"render"}})
 	resp, err = http.Post(srv.URL+"/api/auth/device/approve", "application/json", bytes.NewReader(body))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	resp.Body.Close()
 
 	// Poll while approved_unfetched -> 200 with token.
 	body, _ = json.Marshal(pollRequest{DeviceCode: sr.DeviceCode})
 	resp, err = http.Post(srv.URL+"/api/auth/device/poll", "application/json", bytes.NewReader(body))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("approved poll: %d", resp.StatusCode)
 	}
@@ -218,7 +242,9 @@ func TestPoll_StateTransitions(t *testing.T) {
 	// Poll again -> 410 (done, plaintext purged).
 	body, _ = json.Marshal(pollRequest{DeviceCode: sr.DeviceCode})
 	resp, err = http.Post(srv.URL+"/api/auth/device/poll", "application/json", bytes.NewReader(body))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusGone {
 		t.Errorf("post-fetch poll: %d", resp.StatusCode)

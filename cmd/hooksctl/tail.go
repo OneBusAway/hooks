@@ -108,7 +108,7 @@ func printEvent(asJSON bool, source string, msg map[string]string) {
 		return
 	}
 	var p struct {
-		DeliveryID        string `json:"delivery_id"`
+		DeliveryID        string    `json:"delivery_id"`
 		ProviderTimestamp time.Time `json:"provider_timestamp"`
 		Body              string    `json:"body"`
 	}

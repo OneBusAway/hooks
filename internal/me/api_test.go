@@ -33,11 +33,11 @@ func newTestStore(t *testing.T) *store.SQLite {
 }
 
 type fixture struct {
-	st      *store.SQLite
-	mgr     *auth.Manager
-	api     *API
-	srv     *httptest.Server
-	user    store.User
+	st       *store.SQLite
+	mgr      *auth.Manager
+	api      *API
+	srv      *httptest.Server
+	user     store.User
 	pwdPlain string
 }
 

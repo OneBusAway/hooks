@@ -199,10 +199,10 @@ type pollRequest struct {
 }
 
 type pollResponse struct {
-	Token   string   `json:"token,omitempty"`
-	UserID  string   `json:"user_id,omitempty"`
-	Name    string   `json:"name,omitempty"`
-	Scopes  []string `json:"scopes,omitempty"`
+	Token  string   `json:"token,omitempty"`
+	UserID string   `json:"user_id,omitempty"`
+	Name   string   `json:"name,omitempty"`
+	Scopes []string `json:"scopes,omitempty"`
 }
 
 func (a *API) Poll(w http.ResponseWriter, r *http.Request) {
@@ -290,7 +290,11 @@ func (a *API) Poll(w http.ResponseWriter, r *http.Request) {
 		// before scheduling. Failure here is logged so the security-
 		// sensitive narrow window (plaintext_token sitting in
 		// approved_unfetched indefinitely) is observable, not silent.
-		go func(deviceCode string, logger *slog.Logger, hook func(string, error)) {
+		// G118: the goroutine intentionally outlives the request context; we
+		// must not abort MarkFetched if the client closes the connection
+		// (that is exactly when leaving the row in approved_unfetched would be
+		// most dangerous), so a fresh 5s budget on context.Background is right.
+		go func(deviceCode string, logger *slog.Logger, hook func(string, error)) { //nolint:gosec
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			err := a.Pairings.MarkFetched(ctx, deviceCode)
@@ -564,4 +568,3 @@ func devicePrefix(code string) string {
 	}
 	return code[:8]
 }
-

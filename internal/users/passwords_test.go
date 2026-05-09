@@ -50,10 +50,10 @@ func TestPasswordVerify_MalformedHashReturnsFalseAndNoError(t *testing.T) {
 
 func TestValidatePassword(t *testing.T) {
 	tests := []struct {
-		name      string
-		email     string
-		pw        string
-		wantPass  bool
+		name       string
+		email      string
+		pw         string
+		wantPass   bool
 		wantReason string
 	}{
 		{"too short", "a@b.com", "short", false, ReasonTooShort},

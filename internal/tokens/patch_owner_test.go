@@ -46,7 +46,7 @@ func newPatchOwnerFixture(t *testing.T) *patchOwnerFixture {
 	target := store.Token{
 		ID: uuid.NewString(), Name: "target", Scopes: []string{"render"},
 		SecretHash: "$argon2id$v=19$m=65536,t=1,p=4$aaaaaaaaaaaaaaaaaaaaaa$bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		CreatedAt: time.Now().UTC(), OwnerUserID: &owner, Kind: store.TokenKindListener,
+		CreatedAt:  time.Now().UTC(), OwnerUserID: &owner, Kind: store.TokenKindListener,
 	}
 	if err := st.Insert(context.Background(), target); err != nil {
 		t.Fatal(err)

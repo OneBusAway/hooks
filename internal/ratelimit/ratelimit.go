@@ -18,8 +18,8 @@ import (
 
 // Limit names a per-period quota.
 type Limit struct {
-	Per    time.Duration
-	Burst  int
+	Per   time.Duration
+	Burst int
 }
 
 // String renders the limit as a debug-friendly hint.

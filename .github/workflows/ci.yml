@@ -5,26 +5,52 @@ on:
     branches: [main]
   pull_request:
 
+# Cancel in-progress runs for the same ref when a new commit lands; saves CI
+# minutes during rapid push cycles.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
-  test:
+  build:
+    name: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25.x"
+          # Pin to the version declared in go.mod so the runner matches
+          # what go.mod's `go 1.x.y` directive requires.
+          go-version-file: go.mod
+          cache: true
+      - run: make build
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
           cache: true
       - run: go vet ./...
-      - run: go test ./...
+      - run: go test -race ./...
 
   lint:
+    name: lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25.x"
+          go-version-file: go.mod
           cache: true
-      - uses: golangci/golangci-lint-action@v6
-        with:
-          version: latest
+      # `make lint` runs `go vet`, `sqlc diff`, and `go tool golangci-lint`.
+      # Using the project-pinned tool (via the `tool` directive in go.mod)
+      # keeps the lint version reproducible and avoids the "golangci-lint
+      # built with go1.X < target go1.Y" mismatch.
+      - run: make lint

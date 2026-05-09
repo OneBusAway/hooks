@@ -43,13 +43,13 @@ const (
 
 // Handler serves /subscribe/<source>.
 type Handler struct {
-	Store         store.EventStore
-	Notifier      *pubsub.Notifier
-	Auth          *tokens.Authenticator
-	Sources       map[string]bool
-	Logger        *slog.Logger
-	Keepalive     time.Duration
-	BatchLimit    int
+	Store      store.EventStore
+	Notifier   *pubsub.Notifier
+	Auth       *tokens.Authenticator
+	Sources    map[string]bool
+	Logger     *slog.Logger
+	Keepalive  time.Duration
+	BatchLimit int
 }
 
 // New constructs a Handler with sensible defaults.

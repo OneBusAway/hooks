@@ -86,9 +86,9 @@ type Inspector struct {
 	HashPassword   func(plaintext string) (string, error)
 	ValidatePolicy func(email, plaintext string) error
 	Logger         *slog.Logger
-	Sources     []string
-	tpls        *template.Template
-	staticSub   fs.FS
+	Sources        []string
+	tpls           *template.Template
+	staticSub      fs.FS
 }
 
 // New constructs an Inspector. Templates are parsed at construction.

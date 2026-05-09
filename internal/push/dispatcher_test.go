@@ -218,10 +218,17 @@ func TestDispatcherDoesNotAdvanceOnNon2xx(t *testing.T) {
 func TestSignatureMatchesConsumerVerification(t *testing.T) {
 	m, st, _ := setupManager(t)
 	const secret = "consumer-secret"
-	var captured recordedRequest
+	// Test goroutine reads `captured` while the httptest handler goroutine
+	// writes it; serialize through the mutex to satisfy `-race`.
+	var (
+		mu       sync.Mutex
+		captured recordedRequest
+	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
 		captured = recordedRequest{Body: body, Headers: r.Header.Clone()}
+		mu.Unlock()
 		w.WriteHeader(200)
 	}))
 	t.Cleanup(srv.Close)
@@ -239,18 +246,24 @@ func TestSignatureMatchesConsumerVerification(t *testing.T) {
 	ev := appendEv(t, st, "render", "d-1", body)
 	m.Notifier.Publish("render", ev.Sequence)
 
+	snapshot := func() recordedRequest {
+		mu.Lock()
+		defer mu.Unlock()
+		return captured
+	}
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if captured.Headers != nil {
+		if snapshot().Headers != nil {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	if captured.Headers == nil {
+	got := snapshot()
+	if got.Headers == nil {
 		t.Fatal("no request received")
 	}
 
-	header := captured.Headers.Get("X-Hooks-Signature")
+	header := got.Headers.Get("X-Hooks-Signature")
 	parts := strings.Split(header, ",")
 	if len(parts) != 2 || !strings.HasPrefix(parts[0], "t=") || !strings.HasPrefix(parts[1], "v1=") {
 		t.Fatalf("bad signature header: %q", header)
@@ -261,7 +274,7 @@ func TestSignatureMatchesConsumerVerification(t *testing.T) {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(tsRaw))
 	mac.Write([]byte("."))
-	mac.Write(captured.Body)
+	mac.Write(got.Body)
 	wantV1 := hex.EncodeToString(mac.Sum(nil))
 	if gotV1 != wantV1 {
 		t.Fatalf("v1 mismatch: got %s want %s", gotV1, wantV1)

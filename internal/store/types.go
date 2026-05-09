@@ -250,15 +250,15 @@ type Session struct {
 
 // Invite is a single-use signup gate.
 type Invite struct {
-	Code              string
-	Role              Role
-	DefaultScopes     []string
-	CreatedByUserID   *string
-	Bootstrap         bool
-	CreatedAt         time.Time
-	ExpiresAt         *time.Time
-	ConsumedAt        *time.Time
-	ConsumedByUserID  *string
+	Code             string
+	Role             Role
+	DefaultScopes    []string
+	CreatedByUserID  *string
+	Bootstrap        bool
+	CreatedAt        time.Time
+	ExpiresAt        *time.Time
+	ConsumedAt       *time.Time
+	ConsumedByUserID *string
 }
 
 // DevicePairingStatus is the lifecycle state of a device-pairing row.

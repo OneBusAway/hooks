@@ -29,14 +29,14 @@ type SessionProvider interface {
 
 // API exposes /api/users/* and /api/audit.
 type API struct {
-	Users         store.UserStore
-	Sessions      store.SessionStore
-	Tokens        store.TokenStore
-	Subs          store.PushSubscriptionStore
-	Audit         audit.Recorder
-	AuditReader   store.AuditStore
-	Cascader      Cascader
-	HashPassword  func(plaintext string) (string, error)
+	Users          store.UserStore
+	Sessions       store.SessionStore
+	Tokens         store.TokenStore
+	Subs           store.PushSubscriptionStore
+	Audit          audit.Recorder
+	AuditReader    store.AuditStore
+	Cascader       Cascader
+	HashPassword   func(plaintext string) (string, error)
 	ValidatePolicy func(email, plaintext string) error
 
 	Logger *slog.Logger

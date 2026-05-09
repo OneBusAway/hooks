@@ -196,4 +196,3 @@ func BuildBindings(specs map[string]BuildSpec) map[string]SourceBinding {
 	}
 	return out
 }
-

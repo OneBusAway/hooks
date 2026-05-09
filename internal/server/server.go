@@ -53,8 +53,6 @@ type Server struct {
 	httpServer *http.Server
 	stopOnce   sync.Once
 	stopped    chan struct{}
-	readyOK    bool
-	readyMu    sync.RWMutex
 }
 
 // Build constructs a fully wired Server. Caller is responsible for calling

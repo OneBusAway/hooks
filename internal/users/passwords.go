@@ -48,7 +48,7 @@ func VerifyPassword(plaintext secret.String, encoded string) (bool, error) {
 		// malformed-hash row, then return false without leaking the err.
 		var dummySalt [saltLen]byte
 		_ = argon2.IDKey([]byte(plaintext.Reveal()), dummySalt[:], argonTime, argonMemory, argonThreads, argonKeyLen)
-		return false, nil
+		return false, nil //nolint:nilerr // intentional: suppressing the err is the timing-oracle defense.
 	}
 	got := argon2.IDKey([]byte(plaintext.Reveal()), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
 	return secret.Equal(got, digest), nil

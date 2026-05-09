@@ -79,7 +79,7 @@ func (v *renderVerifier) Verify(headers http.Header, body []byte) (time.Time, st
 	}
 	tsNum, err := strconv.ParseInt(tsRaw, 10, 64)
 	if err != nil {
-		return time.Time{}, "", fmt.Errorf("%w: %s: %v", ErrMalformedHeader, standardwebhooks.HeaderWebhookTimestamp, err)
+		return time.Time{}, "", fmt.Errorf("%w: %s: %w", ErrMalformedHeader, standardwebhooks.HeaderWebhookTimestamp, err)
 	}
 	providerTime := time.Unix(tsNum, 0).UTC()
 
@@ -88,9 +88,9 @@ func (v *renderVerifier) Verify(headers http.Header, body []byte) (time.Time, st
 	if err := v.wh.VerifyIgnoringTimestamp(body, headers); err != nil {
 		switch {
 		case errors.Is(err, standardwebhooks.ErrRequiredHeaders):
-			return time.Time{}, "", fmt.Errorf("%w: %v", ErrMissingHeader, err)
+			return time.Time{}, "", fmt.Errorf("%w: %w", ErrMissingHeader, err)
 		case errors.Is(err, standardwebhooks.ErrInvalidHeaders):
-			return time.Time{}, "", fmt.Errorf("%w: %v", ErrMalformedHeader, err)
+			return time.Time{}, "", fmt.Errorf("%w: %w", ErrMalformedHeader, err)
 		case errors.Is(err, standardwebhooks.ErrNoMatchingSignature):
 			return time.Time{}, "", ErrInvalidSignature
 		default:

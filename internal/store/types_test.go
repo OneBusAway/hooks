@@ -9,11 +9,11 @@ func TestDevicePairing_ApprovedToken(t *testing.T) {
 	tokenID := "tok_abc"
 
 	tests := []struct {
-		name         string
-		pairing      DevicePairing
-		wantOK       bool
-		wantPT       string
-		wantTokenID  string
+		name        string
+		pairing     DevicePairing
+		wantOK      bool
+		wantPT      string
+		wantTokenID string
 	}{
 		{
 			name: "approved with both fields populated returns ok",
