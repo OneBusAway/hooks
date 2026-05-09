@@ -27,7 +27,7 @@ hooks init --server-url https://webhooks.example.com
 
 This writes `hooks.yaml`, creates `hooks.db`, mints a one-time **admin token** (the legacy system credential), and — because the users table is empty — prints a one-time **bootstrap signup URL** (24-hour TTL):
 
-```
+```text
 admin token (shown ONCE): <long base64 string>
 signup: https://webhooks.example.com/signup?code=ABCDEFGH...
         (single-use; expires in 24h; auto-disables once any account exists)
@@ -74,7 +74,7 @@ If the link expires before you use it, re-run `hooks init` against the still-emp
 
 In Render, create (or edit) the webhook so its URL points at:
 
-```
+```text
 https://webhooks.example.com/ingest/render
 ```
 
