@@ -33,10 +33,11 @@ You now have `./bin/hooks` (the relay) and `./bin/hooksctl` (the developer CLI).
 ./bin/hooks init
 ```
 
-This writes `hooks.yaml`, creates `hooks.db`, and prints an admin token **once**. Copy it now — there is no way to recover it later.
+This writes `hooks.yaml`, creates `hooks.db`, and prints an admin token **once**. Copy it now — there is no way to recover it later. On a fresh DB it also prints a one-time **signup URL** (24-hour TTL) so the first human can claim an admin account through `/signup`.
 
 ```
 admin token (shown ONCE): <long base64 string>
+signup: http://localhost:8080/signup?code=<code>   (24h, single-use)
 ```
 
 Export it for `hooksctl`:

@@ -8,8 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 There are two binaries:
 
-- `cmd/hooks` — the server. Also exposes subcommands: `init` (scaffold `hooks.yaml` + DB + admin token), `prune --older-than <dur>`, `verify` (recompute body sha256 across the store).
-- `cmd/hooksctl` — operator/developer CLI. Subcommands: `tail`, `forward`, `replay`, `token {add,list,revoke}`, `push {add,list,get,pause,resume,rotate-secret,rm,test}`. Honors `HOOKS_SERVER` and `HOOKS_TOKEN` env vars.
+- `cmd/hooks` — the server. Also exposes subcommands: `init` (scaffold `hooks.yaml` + DB + admin token + bootstrap signup URL), `invite` (mint an admin invite from the local admin token and print a signup URL), `prune --older-than <dur>`, `verify` (recompute body sha256 across the store).
+- `cmd/hooksctl` — operator/developer CLI. Subcommands: `tail`, `forward`, `replay`, `login`, `logout`, `whoami`, `me {token {add,list,revoke}, sub {add,list,get,pause,resume,rotate-secret,rm,test}}`, `token {add,list,revoke}`, `push {add,list,get,pause,resume,rotate-secret,rm,test}`. Auth resolution is `--token` > `HOOKS_TOKEN` > `${XDG_CONFIG_HOME:-$HOME/.config}/hooks/credentials.<profile>` (written by `hooksctl login`) > unauthenticated. Honors `HOOKS_SERVER` and `HOOKS_TOKEN`.
 
 ## Common commands
 
