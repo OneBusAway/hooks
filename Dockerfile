@@ -14,7 +14,12 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 
-COPY . .
+# Selective COPY rather than `COPY . .` — keeps the build context tight and
+# is explicit about what lands in the image. .dockerignore is a backstop, but
+# being explicit here is the primary defence against accidentally shipping
+# secrets, local state, or .git.
+COPY cmd/      ./cmd/
+COPY internal/ ./internal/
 
 # Pure-Go build: modernc.org/sqlite means we don't need cgo.
 # -trimpath strips local filesystem paths from the binary; -ldflags reduces

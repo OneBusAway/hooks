@@ -75,7 +75,7 @@ func TestImageRunsAsNonRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("id -u: %v\n%s", err, out)
 	}
-	if uid := strings.TrimSpace(string(out)); uid == "0" {
+	if strings.TrimSpace(string(out)) == "0" {
 		t.Fatalf("image runs as root (uid=0); expected non-root for security")
 	}
 }
@@ -95,6 +95,11 @@ func TestImageShipsBothBinaries(t *testing.T) {
 // hooks.yaml + hooks.db. The 0o777 chmod is needed because the container
 // drops to UID 65532 which isn't the host user — bind-mount writes would
 // otherwise EACCES. Safe here because the dir is per-test and ephemeral.
+//
+// `hooks init` prints a one-time admin token and a bootstrap signup code on
+// stdout. Both are credentials, so we never put the raw output in t.Fatalf
+// messages — CI logs are public on PRs. We assert against a sentinel string
+// and report only that the assertion failed, never the content.
 func scaffoldDataDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -106,10 +111,10 @@ func scaffoldDataDir(t *testing.T) string {
 		imageTag, "init",
 	).CombinedOutput()
 	if err != nil {
-		t.Fatalf("hooks init: %v\n%s", err, out)
+		t.Fatalf("hooks init: %v (output redacted: contains one-time admin token)", err)
 	}
 	if !strings.Contains(string(out), "admin token (shown ONCE)") {
-		t.Fatalf("init did not print admin token line:\n%s", out)
+		t.Fatal("init did not print the admin-token line (output redacted)")
 	}
 	return dir
 }
