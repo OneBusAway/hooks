@@ -7,6 +7,9 @@
 //	hooksctl replay <source> <sequence> --to <url>
 //	hooksctl token {add,list,revoke}
 //	hooksctl push  {add,list,get,pause,resume,rotate-secret,rm,test}
+//	hooksctl login [--profile <name>] [--scopes <list>] [--admin]
+//	hooksctl logout [--profile <name>]
+//	hooksctl whoami [--profile <name>]
 package main
 
 import (
@@ -37,17 +40,22 @@ Commands:
   push rotate-secret <id>                               rotate signing secret
   push rm <id>                                          delete a push subscription
   push test <id>                                        send a synthetic ping
+  login [--profile <name>] [--scopes <list>] [--admin]  device-pair to obtain a PAT
+  logout [--profile <name>]                             revoke local PAT and delete creds file
+  whoami [--profile <name>]                             show the authenticated user
 
 Global flags (also overridable per-command):
-  --server <url>   server address (default http://localhost:8080)
-  --token  <tok>   bearer token (default $HOOKS_TOKEN)
-  --json           machine-readable output where supported
+  --server  <url>    server address (default http://localhost:8080)
+  --token   <tok>    bearer token (default $HOOKS_TOKEN; falls back to profile)
+  --profile <name>   credentials profile name (default "default")
+  --json             machine-readable output where supported
 `
 
 type globals struct {
-	Server string
-	Token  string
-	JSON   bool
+	Server  string
+	Token   string
+	JSON    bool
+	Profile string
 }
 
 func main() { os.Exit(run(os.Args[1:])) }
@@ -62,10 +70,15 @@ func run(args []string) int {
 	rest := args[1:]
 
 	g := globals{
-		Server: env("HOOKS_SERVER", "http://localhost:8080"),
+		Server: env("HOOKS_SERVER", defaultServerURL),
 		Token:  os.Getenv("HOOKS_TOKEN"),
 	}
 	rest = splitGlobalFlags(rest, &g)
+
+	// Fill any unset --token / --server from the credentials profile.
+	// Precedence is enforced inside resolveProfile: --token > HOOKS_TOKEN >
+	// profile file > unauthenticated.
+	resolveProfile(&g, g.Profile)
 
 	switch cmd {
 	case "tail":
@@ -78,6 +91,12 @@ func run(args []string) int {
 		return cmdToken(g, rest)
 	case "push":
 		return cmdPush(g, rest)
+	case "login":
+		return cmdLogin(g, rest)
+	case "logout":
+		return cmdLogout(g, rest)
+	case "whoami":
+		return cmdWhoami(g, rest)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n%s", cmd, usageText)
 		return 2
@@ -101,6 +120,11 @@ func splitGlobalFlags(args []string, g *globals) []string {
 			if i < len(args) {
 				g.Token = args[i]
 			}
+		case "--profile":
+			i++
+			if i < len(args) {
+				g.Profile = args[i]
+			}
 		case "--json":
 			g.JSON = true
 		default:
@@ -108,6 +132,8 @@ func splitGlobalFlags(args []string, g *globals) []string {
 				g.Server = v
 			} else if v, ok := strings.CutPrefix(a, "--token="); ok {
 				g.Token = v
+			} else if v, ok := strings.CutPrefix(a, "--profile="); ok {
+				g.Profile = v
 			} else {
 				out = append(out, a)
 			}
