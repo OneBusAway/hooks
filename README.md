@@ -143,3 +143,7 @@ See [`docs/accounts.md`](docs/accounts.md) for the full walkthrough (scopes, adm
 - **HTTP 404** — the URL path is wrong; it must end in `/ingest/render`.
 - **No request reaches the relay at all** — confirm the tunnel URL works in your browser (`/healthz` should return `ok`), and that you saved the updated URL in the Render dashboard.
 - **The `--dev` browser tab won't authenticate** — paste the admin token printed by `hooks init`, not your Render secret.
+
+# LICENSE
+
+(c) Open Transit Software Foundation and made available under the [Apache 2.0 license](./LICENSE).
