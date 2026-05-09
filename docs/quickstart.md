@@ -64,6 +64,43 @@ hooks --dev          # verbose logs + opens the inspector locally
 
 Wire your load balancer's health check to `/readyz` (which pings SQLite); `/healthz` is liveness-only.
 
+### 3a. Or run it as a container
+
+If you'd rather ship a container than a binary, the repo has a multi-stage `Dockerfile` (Go builder → small Alpine runtime, non-root). The image runs as UID 65532, mounts `/data` as a volume for the SQLite database, and ships both `hooks` and `hooksctl` so you can `docker exec` to manage tokens.
+
+```sh
+make docker-build                       # builds hooks:dev
+mkdir -p ./hooks-data
+docker run --rm -v $(pwd)/hooks-data:/data hooks:dev init \
+  --server-url https://webhooks.example.com
+docker run -d --name hooks --restart=unless-stopped \
+  -p 8080:8080 \
+  -v $(pwd)/hooks-data:/data \
+  -e RENDER_WEBHOOK_SECRET \
+  -e HOOKS_PUBLIC_URL=https://webhooks.example.com \
+  hooks:dev
+```
+
+Defaults set by the image: `HOOKS_DATABASE_URL=/data/hooks.db`, `HOOKS_LISTEN_ADDR=:8080`. Point your TLS-terminating proxy at `localhost:8080` exactly as in the binary path above.
+
+A Dockerfile-level `HEALTHCHECK` polls `/healthz`; in front of a load balancer, prefer `/readyz` (which also pings SQLite).
+
+### 3b. Or deploy to Render with the Blueprint
+
+The repo also includes a `render.yaml` Blueprint. To deploy:
+
+1. Push (or fork) this repo to GitHub, then in Render: **New → Blueprint** and select the repo. Render reads `render.yaml` and provisions a Docker web service plus a 1 GiB persistent disk mounted at `/data`.
+2. After the first deploy, in the service's **Environment** tab set:
+    - `RENDER_WEBHOOK_SECRET` — the per-webhook signing secret Render gave you when you created the webhook in step 5 below.
+    - `HOOKS_PUBLIC_URL` — your service's external URL, e.g. `https://hooks-abc1.onrender.com`. Used to build the bootstrap signup link and device-pairing pages.
+3. Open a shell into the service (Render dashboard → **Shell**) and bootstrap:
+    ```sh
+    hooks init --server-url "$HOOKS_PUBLIC_URL"
+    ```
+   Save the printed admin token and bootstrap signup URL. Restart the service so it picks up the new DB.
+
+The Blueprint pins `HOOKS_LISTEN_ADDR=:10000` to match Render's Docker `PORT` default and wires `/readyz` as the health check. Both `hooks` and `hooksctl` are on `$PATH` in the shell, so token rotation, push subscription management, and pruning all work without leaving Render.
+
 ## 4. Claim the first admin account
 
 Open the bootstrap signup URL from step 2 in a browser. Pick an email, name, and password (≥ 12 characters; must not contain your email or its local-part). Submitting the form consumes the bootstrap invite, signs you into the inspector at `/inspector`, and the URL returns 409 from then on.

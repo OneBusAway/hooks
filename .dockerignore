@@ -1,0 +1,26 @@
+# Build outputs
+bin/
+/out/
+
+# SQLite artifacts (never bake a local DB into the image)
+*.db
+*.db-shm
+*.db-wal
+
+# Local config (kept out of the image; ship it via volume / env)
+hooks.yaml
+.env
+
+# VCS / editor / OS noise
+.git/
+.github/
+.claude/
+.vscode/
+.idea/
+.DS_Store
+
+# Not needed at runtime; trim to keep the build context tight.
+docs/
+openspec/
+*.md
+LICENSE
