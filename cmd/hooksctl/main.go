@@ -7,6 +7,8 @@
 //	hooksctl replay <source> <sequence> --to <url>
 //	hooksctl token {add,list,revoke}
 //	hooksctl push  {add,list,get,pause,resume,rotate-secret,rm,test}
+//	hooksctl me    token  {add,list,revoke}
+//	hooksctl me    sub    {add,list,get,pause,resume,rotate-secret,rm,test}
 //	hooksctl login [--profile <name>] [--scopes <list>] [--admin]
 //	hooksctl logout [--profile <name>]
 //	hooksctl whoami [--profile <name>]
@@ -40,6 +42,13 @@ Commands:
   push rotate-secret <id>                               rotate signing secret
   push rm <id>                                          delete a push subscription
   push test <id>                                        send a synthetic ping
+  me token add --name <n> --scopes <list>               mint a PAT/listener owned by the caller
+       [--kind pat|listener] [--ephemeral]
+       [--expires-in 30m|24h|30d]
+  me token list [--include-revoked] [--kind <k>]        list caller-owned tokens
+  me token revoke <id>                                  revoke one of the caller's tokens
+  me sub {add|list|get|pause|resume|rotate-secret|rm|test}
+                                                        push subscription parity scoped to caller
   login [--profile <name>] [--scopes <list>] [--admin]  device-pair to obtain a PAT
   logout [--profile <name>]                             revoke local PAT and delete creds file
   whoami [--profile <name>]                             show the authenticated user
@@ -91,6 +100,8 @@ func run(args []string) int {
 		return cmdToken(g, rest)
 	case "push":
 		return cmdPush(g, rest)
+	case "me":
+		return cmdMe(g, rest)
 	case "login":
 		return cmdLogin(g, rest)
 	case "logout":
