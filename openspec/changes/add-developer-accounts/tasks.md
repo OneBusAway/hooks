@@ -138,10 +138,10 @@ All new and altered tables live in `internal/store/schema.sql` (the canonical sc
 - [ ] 11.5 `/inspector/users` (admin): user table, "Issue invite" form (signup URL shown once), per-row deactivate (with email-confirmation modal; refuses last-admin), reactivate, reset-password, edit-default-scopes — all CSRF-protected
 - [ ] 11.6 `/inspector/audit` (admin): audit-event log with actor and time-range filtering
 - [ ] 11.7 `/inspector/me/push`: user-owned push-subscription view mirroring `/inspector/push` but without the owner column
-- [ ] 11.8 Update `/inspector/tokens` (admin): add owner column (`system` vs user email) and `kind` column; add optional `owner_user_id` field on Add Token form for minting on behalf of users
-- [ ] 11.9 Update `/inspector/push` (admin): add owner column; add `?owner=` filter dropdown
+- [x] 11.8 Update `/inspector/tokens` (admin): add owner column (`system` vs user email) and `kind` column; add optional `owner_user_id` field on Add Token form for minting on behalf of users
+- [x] 11.9 Update `/inspector/push` (admin): add owner column; add `?owner=` filter dropdown
 - [x] 11.10 Update `/inspector` redirect logic: anonymous → `/login?next=/inspector`; non-admin user → `/inspector/me`
-- [ ] 11.11 Preserve legacy raw-bearer cookie path for `/inspector` with **full mutation access** for v1 (deprecation in v2); never set this cookie format on new logins
+- [x] 11.11 Preserve legacy raw-bearer cookie path for `/inspector` with **full mutation access** for v1 (deprecation in v2); never set this cookie format on new logins
 - [x] 11.12 Add session-cookie middleware that complements the existing token-bearer middleware on the inspector router
 - [ ] 11.13 Tests: anonymous redirect, non-admin redirect, admin session grants access, legacy cookie path still authorizes mutations, deactivate confirmation modal blocks bad input, last-admin deactivation refused, all `/inspector/me/*` views are scoped to caller, every form POST without CSRF token returns 403
 

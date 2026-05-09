@@ -3,6 +3,13 @@
 <form method="post" action="/inspector/tokens/create" class="form-row">
   <label>Name <input type="text" name="name" required></label>
   <label>Scopes <input type="text" name="scopes" placeholder="render,admin" required></label>
+  <label>Kind
+    <select name="kind">
+      <option value="listener">listener</option>
+      <option value="pat">pat</option>
+    </select>
+  </label>
+  <label>Owner user id (optional) <input type="text" name="owner_user_id" placeholder="uuid"></label>
   <button type="submit">Add</button>
 </form>
 
@@ -13,12 +20,14 @@
 {{end}}
 
 <table>
-  <thead><tr><th>ID</th><th>Name</th><th>Scopes</th><th>Created</th><th>Last used</th><th></th></tr></thead>
+  <thead><tr><th>ID</th><th>Name</th><th>Owner</th><th>Kind</th><th>Scopes</th><th>Created</th><th>Last used</th><th></th></tr></thead>
   <tbody>
   {{range .Tokens}}
   <tr>
     <td><code>{{.ID}}</code></td>
     <td>{{.Name}}</td>
+    <td>{{.OwnerLabel}}</td>
+    <td>{{.KindLabel}}</td>
     <td>{{range .Scopes}}<span class="tag">{{.}}</span> {{end}}</td>
     <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
     <td>{{if .LastUsedAt}}{{.LastUsedAt.Format "2006-01-02 15:04"}}{{else}}–{{end}}</td>
@@ -29,7 +38,7 @@
     </td>
   </tr>
   {{else}}
-  <tr><td colspan="6" class="empty">No active tokens.</td></tr>
+  <tr><td colspan="8" class="empty">No active tokens.</td></tr>
   {{end}}
   </tbody>
 </table>

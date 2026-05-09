@@ -60,7 +60,12 @@ type Inspector struct {
 	// session-attached User on each request comes from auth.Manager's
 	// per-request lookup, so a separate UserStore reference would be a
 	// stale read; omit it here.
-	Audit     audit.Recorder
+	Audit audit.Recorder
+	// Users, when set, lets /inspector/tokens and /inspector/push render an
+	// "owner" column with the owning user's email instead of a bare id
+	// (task 11.8, 11.9). When nil, those views fall back to printing the
+	// raw owner_user_id string (or "system" for NULL).
+	Users     store.UserStore
 	Logger    *slog.Logger
 	Sources   []string
 	tpls      *template.Template
@@ -221,6 +226,12 @@ func (in *Inspector) loginGET(w http.ResponseWriter, r *http.Request) {
 	in.render(w, "login", map[string]any{"Error": ""})
 }
 
+// loginPOST is the legacy v1 inspector login form. It still issues the
+// raw-bearer cookie for backwards compatibility with operators who haven't
+// yet migrated to /login (the session-based flow). The Deprecation
+// response header (RFC 8594) marks this path as slated for v2 removal;
+// the cookie format itself continues to authenticate every request,
+// including mutations, until then (task 11.11).
 func (in *Inspector) loginPOST(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -246,6 +257,10 @@ func (in *Inspector) loginPOST(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 		Expires:  time.Now().Add(7 * 24 * time.Hour),
 	})
+	w.Header().Set("Deprecation", "true")
+	w.Header().Set("Link", `</login>; rel="successor-version"`)
+	in.Logger.Warn("inspector: legacy /inspector/login used; migrate to /login (deprecated for v2)",
+		slog.String("token_id", tok.ID))
 	http.Redirect(w, r, "/inspector", http.StatusFound)
 }
 
@@ -459,9 +474,66 @@ func (in *Inspector) tokensList(w http.ResponseWriter, r *http.Request) {
 	}
 	in.render(w, "tokens", map[string]any{
 		"Title":     "Tokens",
-		"Tokens":    list,
+		"Tokens":    in.decorateTokens(r.Context(), list),
 		"Plaintext": "",
 	})
+}
+
+// tokenRow decorates a store.Token with a human-readable owner label
+// resolved via the UserStore (when available). OwnerLabel is "system" for
+// rows whose OwnerUserID is nil, the user's email when the lookup
+// succeeds, or the raw user id as a last-resort fallback.
+type tokenRow struct {
+	store.Token
+	OwnerLabel string
+	KindLabel  string
+}
+
+func (in *Inspector) decorateTokens(ctx context.Context, rows []store.Token) []tokenRow {
+	cache := map[string]string{}
+	out := make([]tokenRow, 0, len(rows))
+	for _, t := range rows {
+		out = append(out, tokenRow{
+			Token:      t,
+			OwnerLabel: in.ownerLabel(ctx, t.OwnerUserID, cache),
+			KindLabel:  kindLabel(t.Kind),
+		})
+	}
+	return out
+}
+
+// ownerLabel resolves a nullable owner_user_id to an email (via UserStore)
+// or "system" for NULL. The cache short-circuits repeated lookups within
+// a single render — n tokens by the same user becomes one DB call.
+func (in *Inspector) ownerLabel(ctx context.Context, ownerUserID *string, cache map[string]string) string {
+	if ownerUserID == nil {
+		return "system"
+	}
+	id := *ownerUserID
+	if cached, ok := cache[id]; ok {
+		return cached
+	}
+	if in.Users == nil {
+		cache[id] = id
+		return id
+	}
+	u, err := in.Users.GetByID(ctx, id)
+	if err != nil {
+		// Fall back to the raw id rather than failing the whole render.
+		// A deactivated user still has a row, so this is genuinely the
+		// "user was hard-deleted" path.
+		cache[id] = id
+		return id
+	}
+	cache[id] = u.Email
+	return u.Email
+}
+
+func kindLabel(k store.TokenKind) string {
+	if k == "" {
+		return string(store.TokenKindListener)
+	}
+	return string(k)
 }
 
 func (in *Inspector) tokensCreate(w http.ResponseWriter, r *http.Request) {
@@ -478,16 +550,60 @@ func (in *Inspector) tokensCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name and scopes are required", http.StatusBadRequest)
 		return
 	}
-	res, err := tokens.Issue(r.Context(), in.Tokens, name, scopes)
+	kind := store.TokenKind(strings.TrimSpace(r.Form.Get("kind")))
+	switch kind {
+	case "", store.TokenKindListener, store.TokenKindPAT:
+		// ok; "" is treated as listener below.
+	default:
+		http.Error(w, "kind must be 'pat' or 'listener'", http.StatusBadRequest)
+		return
+	}
+	if kind == "" {
+		kind = store.TokenKindListener
+	}
+	ownerID := strings.TrimSpace(r.Form.Get("owner_user_id"))
+	var ownerPtr *string
+	if ownerID != "" {
+		// Confirm the user exists before issuing; surfacing 404 here is
+		// friendlier than a foreign-key error after generating a token.
+		if in.Users == nil {
+			http.Error(w, "owner lookup unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if _, err := in.Users.GetByID(r.Context(), ownerID); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "owner user not found", http.StatusBadRequest)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		owner := ownerID
+		ownerPtr = &owner
+	}
+	gen, err := tokens.Generate(name, scopes)
 	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	tok := store.Token{
+		ID:          gen.ID,
+		Name:        name,
+		Scopes:      scopes,
+		SecretHash:  gen.Hash,
+		CreatedAt:   time.Now().UTC(),
+		OwnerUserID: ownerPtr,
+		Kind:        kind,
+	}
+	if err := in.Tokens.Insert(r.Context(), tok); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	list, _ := in.Tokens.List(r.Context(), false)
 	in.render(w, "tokens", map[string]any{
 		"Title":     "Tokens",
-		"Tokens":    list,
-		"Plaintext": res.Plaintext,
+		"Tokens":    in.decorateTokens(r.Context(), list),
+		"Plaintext": gen.Plaintext,
 	})
 }
 
@@ -507,23 +623,77 @@ func (in *Inspector) pushList(w http.ResponseWriter, r *http.Request) {
 	if !in.requireAdmin(w, r) {
 		return
 	}
-	subs, err := in.Subs.List(r.Context(), true)
+	owner := r.URL.Query().Get("owner")
+	subs, err := in.fetchPushSubs(r.Context(), owner)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	rendered, err := in.renderSubs(r.Context(), subs)
+	// The owner-filter dropdown lists every distinct user owner across
+	// the full fleet, not just rows visible under the current filter, so
+	// switching from `?owner=system` to a user choice is always possible.
+	allSubs := subs
+	if owner != "" {
+		allSubs, err = in.Subs.List(r.Context(), true)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	cache := map[string]string{}
+	rendered, err := in.renderSubs(r.Context(), subs, cache)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	in.render(w, "push", map[string]any{
-		"Title": "Push",
-		"Subs":  rendered,
+		"Title":        "Push",
+		"Subs":         rendered,
+		"OwnerFilter":  owner,
+		"OwnerOptions": in.ownerOptions(r.Context(), allSubs, cache),
 	})
 }
 
-func (in *Inspector) renderSubs(ctx context.Context, subs []store.PushSubscription) ([]subRow, error) {
+// fetchPushSubs applies the optional ?owner= filter. The contract mirrors
+// the JSON list endpoint (internal/push/api.go): "" returns everything,
+// "system" returns owner-NULL rows, anything else is treated as a user id.
+func (in *Inspector) fetchPushSubs(ctx context.Context, owner string) ([]store.PushSubscription, error) {
+	switch owner {
+	case "":
+		return in.Subs.List(ctx, true)
+	case "system":
+		return in.Subs.ListSystem(ctx, true)
+	default:
+		return in.Subs.ListByOwner(ctx, owner, true)
+	}
+}
+
+// ownerOption is one entry in the /inspector/push owner-filter dropdown.
+type ownerOption struct {
+	Value string // "" / "system" / user_id
+	Label string // "all" / "system" / email-or-id
+}
+
+func (in *Inspector) ownerOptions(ctx context.Context, subs []store.PushSubscription, cache map[string]string) []ownerOption {
+	seen := map[string]bool{}
+	out := []ownerOption{
+		{Value: "", Label: "all"},
+		{Value: "system", Label: "system"},
+	}
+	for _, s := range subs {
+		if s.OwnerUserID == nil || seen[*s.OwnerUserID] {
+			continue
+		}
+		seen[*s.OwnerUserID] = true
+		out = append(out, ownerOption{
+			Value: *s.OwnerUserID,
+			Label: in.ownerLabel(ctx, s.OwnerUserID, cache),
+		})
+	}
+	return out
+}
+
+func (in *Inspector) renderSubs(ctx context.Context, subs []store.PushSubscription, cache map[string]string) ([]subRow, error) {
 	latest := store.NewLatestByCursor(in.Events)
 	out := make([]subRow, 0, len(subs))
 	for _, s := range subs {
@@ -536,6 +706,7 @@ func (in *Inspector) renderSubs(ctx context.Context, subs []store.PushSubscripti
 			LastAttemptAt:       s.LastAttemptAt,
 			LastSuccessAt:       s.LastSuccessAt,
 			PausedAt:            s.PausedAt,
+			OwnerLabel:          in.ownerLabel(ctx, s.OwnerUserID, cache),
 		})
 	}
 	return out, latest.Err()
@@ -553,6 +724,7 @@ type subRow struct {
 	LastAttemptAt       *time.Time
 	LastSuccessAt       *time.Time
 	PausedAt            *time.Time
+	OwnerLabel          string
 }
 
 func truncate(s string, n int) string {
@@ -612,15 +784,17 @@ func (in *Inspector) pushCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	rendered, err := in.renderSubs(r.Context(), subs)
+	cache := map[string]string{}
+	rendered, err := in.renderSubs(r.Context(), subs, cache)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	in.render(w, "push", map[string]any{
-		"Title":     "Push",
-		"Subs":      rendered,
-		"Plaintext": plaintext,
+		"Title":        "Push",
+		"Subs":         rendered,
+		"Plaintext":    plaintext,
+		"OwnerOptions": in.ownerOptions(r.Context(), subs, cache),
 	})
 }
 
@@ -688,15 +862,17 @@ func (in *Inspector) pushRotate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	rendered, err := in.renderSubs(r.Context(), subs)
+	cache := map[string]string{}
+	rendered, err := in.renderSubs(r.Context(), subs, cache)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	in.render(w, "push", map[string]any{
-		"Title":     "Push",
-		"Subs":      rendered,
-		"Plaintext": plaintext,
+		"Title":        "Push",
+		"Subs":         rendered,
+		"Plaintext":    plaintext,
+		"OwnerOptions": in.ownerOptions(r.Context(), subs, cache),
 	})
 }
 
@@ -719,4 +895,3 @@ func (in *Inspector) render(w http.ResponseWriter, name string, data any) {
 		in.Logger.Error("inspector: render", slog.String("name", name), slog.String("error", err.Error()))
 	}
 }
-

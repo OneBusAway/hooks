@@ -5,6 +5,18 @@
 <div class="banner">New signing secret (shown once): <code>{{.Plaintext}}</code></div>
 {{end}}
 
+<form method="get" action="/inspector/push" class="form-row">
+  <label>Owner
+    <select name="owner" onchange="this.form.submit()">
+      {{$active := .OwnerFilter}}
+      {{range .OwnerOptions}}
+        <option value="{{.Value}}"{{if eq .Value $active}} selected{{end}}>{{.Label}}</option>
+      {{end}}
+    </select>
+  </label>
+  <noscript><button type="submit">Filter</button></noscript>
+</form>
+
 <form method="post" action="/inspector/push/create" class="form-row">
   <label>Source <input type="text" name="source" required></label>
   <label>Target URL <input type="url" name="target_url" required></label>
@@ -13,11 +25,12 @@
 </form>
 
 <table>
-  <thead><tr><th>ID</th><th>Source</th><th>Target</th><th>Cursor</th><th>Queue</th><th>Failures</th><th>Last error</th><th>Status</th><th></th></tr></thead>
+  <thead><tr><th>ID</th><th>Owner</th><th>Source</th><th>Target</th><th>Cursor</th><th>Queue</th><th>Failures</th><th>Last error</th><th>Status</th><th></th></tr></thead>
   <tbody>
   {{range .Subs}}
   <tr>
     <td><code>{{.ID}}</code></td>
+    <td>{{.OwnerLabel}}</td>
     <td>{{.Source}}</td>
     <td><code>{{.TargetURL}}</code></td>
     <td>{{.Cursor}}</td>
@@ -37,7 +50,7 @@
     </td>
   </tr>
   {{else}}
-  <tr><td colspan="9" class="empty">No subscriptions.</td></tr>
+  <tr><td colspan="10" class="empty">No subscriptions.</td></tr>
   {{end}}
   </tbody>
 </table>
