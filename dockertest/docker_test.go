@@ -3,6 +3,7 @@
 package dockertest
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"os"
@@ -98,9 +99,18 @@ func TestImageShipsBothBinaries(t *testing.T) {
 //
 // `hooks init` prints a one-time admin token and a bootstrap signup code on
 // stdout. Both are credentials, so we never put the raw output in t.Fatalf
-// messages — CI logs are public on PRs. We assert against a sentinel string
-// and report only that the assertion failed, never the content.
+// messages — CI logs are public on PRs.
 func scaffoldDataDir(t *testing.T) string {
+	t.Helper()
+	dir, _ := scaffoldDataDirCapturingToken(t)
+	return dir
+}
+
+// scaffoldDataDirCapturingToken is scaffoldDataDir plus the one-time admin
+// token. Caller MUST treat the returned token as a secret — never put it
+// into t.Logf / t.Fatalf or any output that lands in CI logs. The redact
+// helper exists precisely so this is easy to do.
+func scaffoldDataDirCapturingToken(t *testing.T) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0o777); err != nil {
@@ -113,10 +123,51 @@ func scaffoldDataDir(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("hooks init: %v (output redacted: contains one-time admin token)", err)
 	}
-	if !strings.Contains(string(out), "admin token (shown ONCE)") {
-		t.Fatal("init did not print the admin-token line (output redacted)")
+	token := extractAdminToken(out)
+	if token == "" {
+		t.Fatal("init did not print an admin-token line (output redacted)")
 	}
-	return dir
+	return dir, token
+}
+
+func extractAdminToken(out []byte) string {
+	const marker = "admin token (shown ONCE):"
+	for _, line := range strings.Split(string(out), "\n") {
+		// HasPrefix on the trimmed line — substring matching would silently
+		// return any text that follows the token if `hooks init` is ever
+		// changed to print extra context on the same line, breaking the
+		// "token never leaks past this helper" invariant.
+		trimmed := strings.TrimLeft(line, " \t")
+		if !strings.HasPrefix(trimmed, marker) {
+			continue
+		}
+		return strings.TrimSpace(trimmed[len(marker):])
+	}
+	return ""
+}
+
+// redact strips occurrences of the secret from buf so the result is safe
+// to include in test logs. Used on `docker exec` output that may echo the
+// HOOKS_TOKEN env we passed in.
+func redact(buf []byte, secret string) []byte {
+	if secret == "" {
+		return buf
+	}
+	return bytes.ReplaceAll(buf, []byte(secret), []byte("[REDACTED]"))
+}
+
+// tokenListContainsName checks for `name` as a whitespace-anchored field in
+// `hooksctl token list` output. Substring matching would over-accept a
+// future header or help banner that mentions the same word.
+func tokenListContainsName(out []byte, name string) bool {
+	for _, line := range strings.Split(string(out), "\n") {
+		for _, field := range strings.Fields(line) {
+			if field == name {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func TestImageInitScaffold(t *testing.T) {
@@ -270,6 +321,174 @@ func TestImageRestartPreservesState(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("/readyz on second run: status %d (sqlite ping)\nlogs:\n%s",
 			resp.StatusCode, dockerLogs(second))
+	}
+}
+
+// shutdownDeadline mirrors the WithTimeout value in cmd/hooks/main.go's
+// signal-handler goroutine. Kept in sync by the SIGTERM test below — if the
+// binary's deadline ever changes, update this too.
+const shutdownDeadline = 30 * time.Second
+
+// TestImageGracefulShutdownOnSIGTERM verifies that `docker stop` (which
+// sends SIGTERM, then SIGKILL after a grace period) lets the binary exit
+// cleanly via its signal.NotifyContext path rather than getting hard-killed.
+// A failed graceful shutdown shows up as exit code 137 (128 + SIGKILL) and
+// `docker stop` taking the full grace period; a successful one returns
+// quickly with exit code 0. The container is started without --rm so we
+// can read .State.ExitCode after stop; cleanup goes through cleanupContainer
+// rather than relying on the daemon to remove it.
+func TestImageGracefulShutdownOnSIGTERM(t *testing.T) {
+	skipIfNoDocker(t)
+	dir := scaffoldDataDir(t)
+
+	name := fmt.Sprintf("hooks-dockertest-sigterm-%d", time.Now().UnixNano())
+	t.Cleanup(func() { cleanupContainer(t, name) })
+
+	if out, err := exec.Command("docker", "run", "-d",
+		"--name", name,
+		"-v", dir+":/data",
+		"-e", "RENDER_WEBHOOK_SECRET=stub-for-tests",
+		"-p", "0:8080",
+		imageTag,
+	).CombinedOutput(); err != nil {
+		t.Fatalf("docker run: %v\n%s", err, out)
+	}
+
+	addr := "http://127.0.0.1:" + hostPort(t, name, "8080/tcp")
+	if err := waitForHealthz(addr, 60*time.Second); err != nil {
+		t.Fatalf("server: %v\nlogs:\n%s", err, dockerLogs(name))
+	}
+
+	// `docker stop -t` exceeds shutdownDeadline by 5s so a slow CI runner
+	// doesn't SIGKILL a graceful-but-slow shutdown.
+	stopGrace := shutdownDeadline + 5*time.Second
+	start := time.Now()
+	if out, err := exec.Command("docker", "stop", "-t",
+		fmt.Sprintf("%d", int(stopGrace.Seconds())), name).CombinedOutput(); err != nil {
+		t.Fatalf("docker stop: %v\n%s", err, out)
+	}
+	elapsed := time.Since(start)
+
+	out, err := exec.Command("docker", "inspect",
+		"--format", "{{.State.ExitCode}}",
+		name,
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker inspect: %v\n%s", err, out)
+	}
+	code := strings.TrimSpace(string(out))
+	if code != "0" {
+		t.Fatalf("graceful shutdown failed: exit=%s after %v\nlogs:\n%s",
+			code, elapsed, dockerLogs(name))
+	}
+	if elapsed > shutdownDeadline {
+		t.Fatalf("docker stop took %v, longer than the binary's %v shutdown deadline",
+			elapsed, shutdownDeadline)
+	}
+}
+
+// TestImageHooksctlAgainstRunningServer boots the server in the container
+// and runs `hooksctl token list` from inside the same container against
+// 127.0.0.1:8080. Proves the shipped hooksctl can talk to the shipped hooks
+// over a real TCP loopback inside the image — a property unit tests can't
+// cover because they swap in httptest servers and a host-built hooksctl.
+//
+// The admin token is captured from `hooks init` and passed to docker exec
+// via -e HOOKS_TOKEN= so it never lands in argv (and never in the test
+// log; we redact before printing failure output).
+func TestImageHooksctlAgainstRunningServer(t *testing.T) {
+	skipIfNoDocker(t)
+	dir, token := scaffoldDataDirCapturingToken(t)
+
+	name := fmt.Sprintf("hooks-dockertest-ctl-%d", time.Now().UnixNano())
+	// Register cleanup before the run so a failure between the two lines
+	// can't leak the container; `docker rm -f` on a not-yet-created name
+	// is a harmless no-op (logged by cleanupContainer).
+	t.Cleanup(func() { cleanupContainer(t, name) })
+	if out, err := exec.Command("docker", "run", "-d", "--rm",
+		"--name", name,
+		"-v", dir+":/data",
+		"-e", "RENDER_WEBHOOK_SECRET=stub-for-tests",
+		"-p", "0:8080",
+		imageTag,
+	).CombinedOutput(); err != nil {
+		t.Fatalf("docker run: %v\n%s", err, out)
+	}
+
+	addr := "http://127.0.0.1:" + hostPort(t, name, "8080/tcp")
+	if err := waitForHealthz(addr, 60*time.Second); err != nil {
+		t.Fatalf("server: %v\nlogs:\n%s", err, dockerLogs(name))
+	}
+
+	// HOOKS_SERVER targets the in-container listener port (8080, EXPOSEd by
+	// the Dockerfile), not the random host-mapped port — exec runs inside
+	// the container's network namespace.
+	cmd := exec.Command("docker", "exec",
+		"-e", "HOOKS_TOKEN="+token,
+		"-e", "HOOKS_SERVER=http://127.0.0.1:8080",
+		name,
+		"hooksctl", "token", "list",
+	)
+	out, err := cmd.CombinedOutput()
+	safe := redact(out, token)
+	if err != nil {
+		t.Fatalf("hooksctl token list: %v\n%s\nlogs:\n%s", err, safe, dockerLogs(name))
+	}
+	// `hooks init` mints the admin token under the default name "operator".
+	// Anchor with whitespace boundaries so a future header rename or help
+	// banner that happens to contain "operator" can't satisfy this.
+	if !tokenListContainsName(out, "operator") {
+		t.Fatalf("token list missing the operator-named admin token\noutput:\n%s", safe)
+	}
+}
+
+// TestImageInitFailsClearlyOn0o755HostDir documents what an operator hits
+// when they follow the README literally — `mkdir -p ./hooks-data` produces
+// a 0o755 directory owned by their host user. The container runs as UID
+// 65532 (non-root), so bind-mount writes inside /data hit EACCES. We don't
+// try to "fix" this in the image (chowning /data inside the container
+// would require running as root or an init script); we test that the
+// failure is loud (non-zero exit, "permission denied" in stderr).
+//
+// Skips on platforms that translate UIDs across the bind mount (Docker
+// Desktop with file sharing typically does this on macOS) — there the
+// scenario doesn't manifest, so there's nothing to assert. The probe runs
+// `touch /data/probe` from inside the container against a 0o755 host dir
+// and skips if the touch succeeds.
+func TestImageInitFailsClearlyOn0o755HostDir(t *testing.T) {
+	skipIfNoDocker(t)
+	dir := t.TempDir()
+	// Force 0o755 to model the README path exactly (`mkdir -p ./hooks-data`
+	// with default umask 022). t.TempDir defaults to 0o700 — both block a
+	// non-owner UID, but 0o755 is the failure operators actually report.
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatalf("chmod tempdir: %v", err)
+	}
+
+	probe, err := exec.Command("docker", "run", "--rm",
+		"-v", dir+":/data",
+		"--entrypoint", "sh",
+		imageTag, "-c", "touch /data/probe",
+	).CombinedOutput()
+	if err == nil {
+		t.Skipf("docker bind mount allows non-owner writes on this host "+
+			"(likely a UID-translating setup like Docker Desktop file sharing); "+
+			"the README permissions edge case doesn't manifest here.\nprobe output: %s", probe)
+	}
+
+	out, runErr := exec.Command("docker", "run", "--rm",
+		"-v", dir+":/data",
+		imageTag, "init",
+	).CombinedOutput()
+	if runErr == nil {
+		// Init succeeded → admin-token line was printed; never echo `out`.
+		t.Fatal("expected `hooks init` to fail on a 0o755 host dir, but it succeeded (output redacted: contains one-time admin token)")
+	}
+	if !bytes.Contains(bytes.ToLower(out), []byte("permission denied")) {
+		// init returned non-zero, so by cmd/hooks/main.go's order it didn't
+		// reach the admin-token print site — `out` is safe to surface and
+		// the diagnostic value is high (tells you what error did fire).
+		t.Fatalf("expected permission-denied error in init output, got:\n%s", out)
 	}
 }
 
