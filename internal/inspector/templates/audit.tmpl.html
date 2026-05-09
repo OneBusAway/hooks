@@ -1,0 +1,37 @@
+{{define "audit"}}{{template "header" .}}
+<h1>Audit log</h1>
+
+<form method="get" class="filters">
+  <label>Actor user id <input type="text" name="actor" value="{{.Filters.Actor}}" placeholder="user-id"></label>
+  <label>Since <input type="text" name="since" value="{{.Filters.Since}}" placeholder="2025-01-02T15:04:05Z"></label>
+  <label>Until <input type="text" name="until" value="{{.Filters.Until}}" placeholder="2025-01-09T15:04:05Z"></label>
+  <label>Limit <input type="number" name="limit" min="1" value="{{.Filters.Limit}}"></label>
+  <button type="submit">Filter</button>
+</form>
+
+<table>
+  <thead><tr><th>At</th><th>Actor</th><th>Token</th><th>Action</th><th>Target</th><th>Metadata</th></tr></thead>
+  <tbody>
+  {{range .Events}}
+  <tr>
+    <td>{{.At.Format "2006-01-02 15:04:05"}}</td>
+    <td>{{.ActorLabel}}</td>
+    <td>{{if .ActorTokenID}}<code>{{.ActorTokenID}}</code>{{else}}–{{end}}</td>
+    <td><code>{{.Action}}</code></td>
+    <td><code>{{.TargetType}}</code> <code>{{.TargetID}}</code></td>
+    <td>
+      {{- if .Metadata -}}
+      <span class="trunc">
+        {{- range $k, $v := .Metadata -}}
+          {{$k}}={{$v}}
+        {{end -}}
+      </span>
+      {{- else -}}–{{- end -}}
+    </td>
+  </tr>
+  {{else}}
+  <tr><td colspan="6" class="empty">No audit events match.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+{{template "footer" .}}{{end}}

@@ -61,15 +61,19 @@ type Inspector struct {
 	// per-request lookup, so a separate UserStore reference would be a
 	// stale read; omit it here.
 	Audit audit.Recorder
-	// Users, when set, lets /inspector/tokens and /inspector/push render an
-	// "owner" column with the owning user's email instead of a bare id
-	// (task 11.8, 11.9). When nil, those views fall back to printing the
-	// raw owner_user_id string (or "system" for NULL).
-	Users     store.UserStore
-	Logger    *slog.Logger
-	Sources   []string
-	tpls      *template.Template
-	staticSub fs.FS
+	// Users, when set, lets /inspector/tokens, /inspector/push, and
+	// /inspector/audit render an "owner" / "actor" column with the user's
+	// email instead of a bare id (tasks 11.8, 11.9, 11.6). When nil, those
+	// views fall back to printing the raw user id (or "system" for NULL).
+	Users store.UserStore
+	// AuditReader, when set, powers /inspector/audit (task 11.6). Reads
+	// audit_events ordered by `at DESC` with optional time-range filters
+	// pulled from the request query string.
+	AuditReader store.AuditStore
+	Logger      *slog.Logger
+	Sources     []string
+	tpls        *template.Template
+	staticSub   fs.FS
 }
 
 // New constructs an Inspector. Templates are parsed at construction.
@@ -152,6 +156,9 @@ func (in *Inspector) Register(mux *http.ServeMux) {
 	mux.Handle("GET /inspector/me", wrap(in.meIndex))
 	mux.Handle("POST /inspector/me/tokens", wrapH(csrf(http.HandlerFunc(in.meCreateToken))))
 	mux.Handle("POST /inspector/me/tokens/{id}/revoke", wrapH(csrf(http.HandlerFunc(in.meRevokeToken))))
+
+	// /inspector/audit (task 11.6): admin-only HTML view of the audit log.
+	mux.Handle("GET /inspector/audit", wrap(in.auditList))
 }
 
 // requireAdmin enforces admin access for an inspector request.

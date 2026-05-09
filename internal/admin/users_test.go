@@ -63,13 +63,13 @@ func newFixture(t *testing.T) *fixture {
 	mgr := auth.NewManager(s.Sessions(), s.Users(), rec, auth.CookieOptions{TTL: time.Hour})
 
 	api := &API{
-		Users:        s.Users(),
-		Sessions:     s.Sessions(),
-		Tokens:       s.Tokens(),
-		Subs:         s.PushSubscriptions(),
-		Audit:        rec,
-		AuditReader:  s.Audit(),
-		Cascader:     s,
+		Users:       s.Users(),
+		Sessions:    s.Sessions(),
+		Tokens:      s.Tokens(),
+		Subs:        s.PushSubscriptions(),
+		Audit:       rec,
+		AuditReader: s.Audit(),
+		Cascader:    s,
 		HashPassword: func(p string) (string, error) {
 			return pkgUsers.HashPassword(secret.String(p))
 		},
@@ -186,7 +186,7 @@ func TestDeactivate_CascadesTokensAndSubs(t *testing.T) {
 	if err := f.st.Insert(context.Background(), store.Token{
 		ID: uuid.NewString(), Name: "u-pat", Scopes: []string{"account"},
 		SecretHash: "$argon2id$v=19$m=65536,t=1,p=4$aaaaaaaaaaaaaaaaaaaaaa$bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		CreatedAt: time.Now().UTC(), OwnerUserID: &owner, Kind: store.TokenKindPAT,
+		CreatedAt:  time.Now().UTC(), OwnerUserID: &owner, Kind: store.TokenKindPAT,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -356,5 +356,76 @@ func TestListAudit_AdminOK_NonAdmin403(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("user: want 403 got %d", resp.StatusCode)
+	}
+}
+
+// TestAuditCoverage_AdminActions (task 10.6): each representative admin
+// action produces exactly one audit_events row with the expected action,
+// target_type, and target_id. The breadth here is intentional but bounded:
+// we exercise three distinct actions per audit constant family
+// (`user.update`, `user.reactivate`, `user.password_reset`) so a regression
+// that drops the recordAudit call for any one of them surfaces here.
+func TestAuditCoverage_AdminActions(t *testing.T) {
+	f := newFixture(t)
+	adminCookies := f.cookies(t, f.admin)
+	ctx := context.Background()
+
+	// 1. user.update via PATCH /api/users/{id}.
+	resp := f.do(t, http.MethodPatch, "/api/users/"+f.user.ID, adminCookies, map[string]any{
+		"name": "Renamed",
+	})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("patch: %d", resp.StatusCode)
+	}
+
+	// 2. user.reactivate via POST /api/users/{id}/reactivate (no-op on an
+	//    already-active user is still a successful 204 + audit row).
+	resp = f.do(t, http.MethodPost, "/api/users/"+f.user.ID+"/reactivate", adminCookies, nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("reactivate: %d", resp.StatusCode)
+	}
+
+	// 3. user.password_reset via POST /api/users/{id}/reset-password.
+	resp = f.do(t, http.MethodPost, "/api/users/"+f.user.ID+"/reset-password", adminCookies, map[string]any{
+		"new_password": "freshpassword-1234",
+	})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("reset-password: %d", resp.StatusCode)
+	}
+
+	rows, err := f.st.Audit().List(ctx, store.AuditQuery{Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[audit.Action]bool{
+		audit.ActionUserUpdate:        false,
+		audit.ActionUserReactivate:    false,
+		audit.ActionUserPasswordReset: false,
+	}
+	for _, ev := range rows {
+		if _, expected := want[ev.Action]; !expected {
+			continue
+		}
+		if want[ev.Action] {
+			t.Errorf("duplicate audit row for action %s", ev.Action)
+		}
+		want[ev.Action] = true
+		if ev.TargetType != audit.TargetTypeUser {
+			t.Errorf("action=%s: TargetType=%q want %q", ev.Action, ev.TargetType, audit.TargetTypeUser)
+		}
+		if ev.TargetID != f.user.ID {
+			t.Errorf("action=%s: TargetID=%q want %q", ev.Action, ev.TargetID, f.user.ID)
+		}
+		if ev.ActorUserID == nil || *ev.ActorUserID != f.admin.ID {
+			t.Errorf("action=%s: ActorUserID=%v want %q", ev.Action, ev.ActorUserID, f.admin.ID)
+		}
+	}
+	for action, seen := range want {
+		if !seen {
+			t.Errorf("expected audit row for action %s; got none", action)
+		}
 	}
 }

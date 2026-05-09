@@ -125,9 +125,9 @@ All new and altered tables live in `internal/store/schema.sql` (the canonical sc
 - [x] 10.1 Create `internal/audit` package with `Recorder` interface (`Record(ctx, Event)`) and a SQLite-backed implementation that inserts into `audit_events`
 - [x] 10.2 Wire the recorder through `server.Build` and call it from every endpoint listed in design.md's "Audit log" section
 - [x] 10.3 `GET /api/audit?actor=<id>&since=<rfc3339>&until=<rfc3339>&limit=<n>` (admin only): paginated read of `audit_events` ordered by `at DESC`
-- [ ] 10.4 `/inspector/audit` (admin only): HTML view rendering the event stream with actor email resolution and a simple time-range filter
+- [x] 10.4 `/inspector/audit` (admin only): HTML view rendering the event stream with actor email resolution and a simple time-range filter
 - [x] 10.5 Append-only invariant: no DELETE or UPDATE statement against `audit_events` in production code paths; the prune loop does not touch this table
-- [ ] 10.6 Tests: every audited action produces exactly one event row with the expected `action`, `target_type`, `target_id`, and metadata; non-admin callers of `/api/audit` and `/inspector/audit` get 403
+- [x] 10.6 Tests: every audited action produces exactly one event row with the expected `action`, `target_type`, `target_id`, and metadata; non-admin callers of `/api/audit` and `/inspector/audit` get 403
 
 ## 11. Inspector UI changes
 
@@ -136,7 +136,7 @@ All new and altered tables live in `internal/store/schema.sql` (the canonical sc
 - [x] 11.3 `/device` page: prompt for user_code, display requesting IP / user-agent / requested scopes (with narrowing checkboxes), the "Approve only if you started this on this machine" warning, the password re-entry field, and a CSRF token. POST to `/api/auth/device/approve`; "Deny" button POSTs to `/api/auth/device/deny`.
 - [x] 11.4 `/inspector/me`: profile + own tokens (filtered by `kind`) + own subscriptions + "mint ephemeral PAT" form (CSRF-protected); admin sees a link to `/inspector/users` and `/inspector/audit`
 - [ ] 11.5 `/inspector/users` (admin): user table, "Issue invite" form (signup URL shown once), per-row deactivate (with email-confirmation modal; refuses last-admin), reactivate, reset-password, edit-default-scopes — all CSRF-protected
-- [ ] 11.6 `/inspector/audit` (admin): audit-event log with actor and time-range filtering
+- [x] 11.6 `/inspector/audit` (admin): audit-event log with actor and time-range filtering
 - [ ] 11.7 `/inspector/me/push`: user-owned push-subscription view mirroring `/inspector/push` but without the owner column
 - [x] 11.8 Update `/inspector/tokens` (admin): add owner column (`system` vs user email) and `kind` column; add optional `owner_user_id` field on Add Token form for minting on behalf of users
 - [x] 11.9 Update `/inspector/push` (admin): add owner column; add `?owner=` filter dropdown

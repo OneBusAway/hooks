@@ -60,6 +60,7 @@ func newSessionFixture(t *testing.T) *sessionFixture {
 	}
 	in.Sessions = mgr
 	in.Users = st.Users()
+	in.AuditReader = st.Audit()
 
 	mux := http.NewServeMux()
 	in.Register(mux)
