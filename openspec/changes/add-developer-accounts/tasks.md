@@ -41,7 +41,7 @@ All new and altered tables live in `internal/store/schema.sql` (the canonical sc
 - [x] 2.10 Wire a verifier injection point analogous to `tokens.AttachVerifier` so the store package never imports argon2 directly. The wrapper layer's `LookupByPlaintext`-equivalents (token, session, password) call the injected hasher per row of a sqlc-generated `:many` listing.
 - [x] 2.11 Add `internal/users/policy.go` with `ValidatePassword(email, plaintext) error` enforcing length ≥ 12 and email-substring rejection (case-folded). Failed validation returns a typed error; the policy reason is logged but the plaintext is not.
 - [x] 2.12 Contract tests covering: email uniqueness (case-insensitive), password roundtrip, deactivation timestamp, invite single-use atomicity (concurrent goroutines, only one wins), bootstrap-invite idempotent insert + expired-bootstrap replacement, last-admin guard prevents demoting/deactivating the final admin, password policy rejects short and email-containing passwords. These tests drive the public store interfaces, not sqlc directly.
-- [ ] 2.13 Crash-safety subprocess test: insert user mid-tx, kill, restart, verify state.
+- [x] 2.13 Crash-safety subprocess test: insert user mid-tx, kill, restart, verify state.
 
 ## 3. Authentication endpoints — sessions and login
 
