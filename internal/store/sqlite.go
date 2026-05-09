@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strings"
 	"time"
@@ -29,6 +30,7 @@ type SQLite struct {
 	q            *sqlcgen.Queries
 	dedupeWindow time.Duration
 	tokenHash    HashLookup
+	logger       *slog.Logger
 }
 
 // SQLiteOptions configures a SQLite store.
@@ -308,6 +310,12 @@ func (s *SQLite) SetTokenHashCompare(fn HashLookup) {
 	s.tokenHash = fn
 }
 
+// SetLogger wires a logger for internal warnings (e.g. corrupted token hash
+// rows discovered during LookupByPlaintext). nil disables logging.
+func (s *SQLite) SetLogger(l *slog.Logger) {
+	s.logger = l
+}
+
 func tokenFromGen(r sqlcgen.ListenerToken) Token {
 	t := Token{
 		ID:         r.ID,
@@ -358,6 +366,15 @@ func (s *SQLite) LookupByPlaintext(ctx context.Context, plaintext string) (Token
 	for _, r := range rows {
 		ok, err := s.tokenHash(plaintext, r.SecretHash)
 		if err != nil {
+			// Surface corrupted hashes by ID so a row that silently fails to
+			// match every plaintext is observable. The ID is safe to log;
+			// the plaintext and the encoded hash are not.
+			if s.logger != nil {
+				s.logger.WarnContext(ctx, "store: token hash compare failed; skipping row",
+					slog.String("token_id", r.ID),
+					slog.Any("err", err),
+				)
+			}
 			continue
 		}
 		if ok {

@@ -67,6 +67,7 @@ func Build(cfg *config.Config, registry *sources.Registry, logger *slog.Logger) 
 		return nil, fmt.Errorf("open store: %w", err)
 	}
 	tokens.AttachVerifier(st)
+	st.SetLogger(logger)
 
 	notifier := pubsub.New()
 

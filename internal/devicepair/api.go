@@ -238,13 +238,14 @@ func (a *API) Poll(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusGone, map[string]string{"error": "no longer fetchable"})
 		return
 	case store.DevicePairingStatusApprovedUnfetched:
-		if dp.PlaintextToken == nil || dp.TokenID == nil {
+		plaintext, tokenID, ok := dp.ApprovedToken()
+		if !ok {
 			a.warn(r.Context(), "device-pairing poll: approved row missing token",
 				slog.String("device_code_prefix", devicePrefix(dp.DeviceCode)))
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "approved row missing token"})
 			return
 		}
-		tok, err := a.Server.GetToken(r.Context(), *dp.TokenID)
+		tok, err := a.Server.GetToken(r.Context(), tokenID)
 		if err != nil {
 			a.warn(r.Context(), "device-pairing poll: token lookup failed",
 				slog.String("device_code_prefix", devicePrefix(dp.DeviceCode)),
@@ -261,7 +262,7 @@ func (a *API) Poll(w http.ResponseWriter, r *http.Request) {
 		// read failed mid-response would lose the only chance to fetch
 		// the plaintext.
 		buf, err := json.Marshal(pollResponse{
-			Token:  *dp.PlaintextToken,
+			Token:  plaintext,
 			UserID: derefString(dp.UserID),
 			Name:   tok.Name,
 			Scopes: tok.Scopes,

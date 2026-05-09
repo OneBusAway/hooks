@@ -287,6 +287,19 @@ type DevicePairing struct {
 	TokenID             *string
 }
 
+// ApprovedToken returns the plaintext token and token ID for a pairing in
+// the approved_unfetched state. ok is the only safe gate: when false, the
+// returned strings are zero values regardless of the row's pointer fields.
+func (p *DevicePairing) ApprovedToken() (plaintext, tokenID string, ok bool) {
+	if p.Status != DevicePairingStatusApprovedUnfetched {
+		return "", "", false
+	}
+	if p.PlaintextToken == nil || p.TokenID == nil {
+		return "", "", false
+	}
+	return *p.PlaintextToken, *p.TokenID, true
+}
+
 // AuditEvent is one row in the audit log.
 type AuditEvent struct {
 	ID           string
