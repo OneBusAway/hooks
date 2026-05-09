@@ -77,7 +77,7 @@ All new and altered tables live in `internal/store/schema.sql` (the canonical sc
 - [x] 6.6 Bootstrap-invite consumption: on every successful signup, also mark any `bootstrap=true` invite as consumed; signup attempts using a consumed bootstrap code return 409; signup attempts using an expired bootstrap code return 410
 - [x] 6.7 `cmd/hooks invite` subcommand (server-side): prints a signup URL for a freshly created (admin-scoped) invite by hitting the API with the local admin token loaded from disk
 - [x] 6.8 `hooksctl invite create [--role user|admin] [--scopes render,...] [--ttl 7d]`, `hooksctl invite list [--include-consumed]`, `hooksctl invite revoke <code>` — CLI subcommands that hit `/api/invites` using the admin's PAT
-- [ ] 6.9 Tests: invite creation idempotency, bootstrap auto-insert idempotent, bootstrap consumed exactly once, expired bootstrap replaced on next init, expired invite rejected with 410, race test (two concurrent signups with same invite — exactly one succeeds), admin-role invite stores `default_scopes` but auth path ignores them, password policy rejection paths
+- [x] 6.9 Tests: invite creation idempotency, bootstrap auto-insert idempotent, bootstrap consumed exactly once, expired bootstrap replaced on next init, expired invite rejected with 410, race test (two concurrent signups with same invite — exactly one succeeds), admin-role invite stores `default_scopes` but auth path ignores them, password policy rejection paths
 
 ## 7. CLI device pairing
 
@@ -105,7 +105,7 @@ All new and altered tables live in `internal/store/schema.sql` (the canonical sc
 - [x] 8.7 Authentication enforcement: PATs (`kind='pat'`) authorize `/api/me/*` and the inspector but NOT `/subscribe/<source>`. Listener tokens (`kind='listener'`) authorize `/subscribe/<source>` and (when admin-scoped) the inspector but NOT `/api/me/*`. Mismatched-kind requests return 403.
 - [x] 8.8 `hooksctl me token add --name <label> --scopes <list> [--kind pat|listener] [--ephemeral] [--expires-in 30d]`, `hooksctl me token list [--include-revoked]`, `hooksctl me token revoke <id>` — CLI subcommands hitting `/api/me/tokens`
 - [x] 8.9 `hooksctl me sub {add,list,pause,resume,rotate-secret,rm,test}` — CLI parity with admin `hooksctl push` subcommands but scoped to the caller's subscriptions via `/api/me/subscriptions`
-- [ ] 8.10 Tests: scope-subset enforcement (request `["render","stripe"]` when user holds only `["render"]` → 403); admin-implicit-scopes test; cross-user 404 (user A cannot revoke user B's token); body-`owner_user_id`-ignored test; PAT cannot subscribe → 403; listener token cannot reach `/api/me` → 403; ephemeral expiry-by-inactivity covered by prune-loop tests; expired non-ephemeral PAT (past `expires_at`) returns 401
+- [x] 8.10 Tests: scope-subset enforcement (request `["render","stripe"]` when user holds only `["render"]` → 403); admin-implicit-scopes test; cross-user 404 (user A cannot revoke user B's token); body-`owner_user_id`-ignored test; PAT cannot subscribe → 403; listener token cannot reach `/api/me` → 403; ephemeral expiry-by-inactivity covered by prune-loop tests; expired non-ephemeral PAT (past `expires_at`) returns 401
 
 ## 9. Admin /api/users and /api/invites surface
 
@@ -118,7 +118,7 @@ All new and altered tables live in `internal/store/schema.sql` (the canonical sc
 - [x] 9.7 `GET /api/tokens?owner=<user_id|system>` (admin) extended to support owner filter; `system` matches `owner_user_id IS NULL`. Add `kind` filter.
 - [x] 9.8 `PATCH /api/tokens/{id} {owner_user_id?}` (admin, CSRF-checked): transfer ownership (or set NULL for system); record `audit_events` action `token.transfer_owner`
 - [x] 9.9 Same `?owner=` filter and `PATCH` ownership transfer for `/api/push-subscriptions` (CSRF-checked); record `audit_events` action `subscription.transfer_owner`
-- [ ] 9.10 Tests: cascading revoke is atomic (failure mid-tx leaves nothing partially deactivated); confirm-email mismatch returns 400; last-admin deactivation returns 409; reactivation does not auto-restore tokens; ownership transfer is reflected in `/api/me` calls by the new owner; `PATCH /api/users/{id}` updates default_scopes; password reset rejects short passwords
+- [x] 9.10 Tests: cascading revoke is atomic (failure mid-tx leaves nothing partially deactivated); confirm-email mismatch returns 400; last-admin deactivation returns 409; reactivation does not auto-restore tokens; ownership transfer is reflected in `/api/me` calls by the new owner; `PATCH /api/users/{id}` updates default_scopes; password reset rejects short passwords
 
 ## 10. Audit log
 

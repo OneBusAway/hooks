@@ -100,3 +100,62 @@ func TestResolvePlaintextHappyPath(t *testing.T) {
 		t.Fatalf("scopes lost: %v", tok.Scopes)
 	}
 }
+
+// TestResolvePlaintext_ExpiredPATReturns401 covers task 8.10's "expired
+// non-ephemeral PAT (past expires_at) returns 401". The middleware must
+// treat any token whose ExpiresAt has elapsed as invalid, regardless of
+// kind or ephemeral status.
+func TestResolvePlaintext_ExpiredPATReturns401(t *testing.T) {
+	st := newSQLite(t)
+	res, err := Generate("expired", []string{"account"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0).UTC()
+	past := now.Add(-time.Minute)
+	if err := st.Insert(context.Background(), store.Token{
+		ID: res.ID, Name: "expired", Scopes: []string{"account"},
+		SecretHash: res.Hash, CreatedAt: now.Add(-time.Hour),
+		Kind: store.TokenKindPAT, ExpiresAt: &past,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	auth := New(st.Tokens())
+	auth.Now = func() time.Time { return now }
+
+	if _, err := auth.ResolvePlaintext(context.Background(), res.Plaintext); !errors.Is(err, errInvalidToken) {
+		t.Fatalf("expired token: got %v, want errInvalidToken", err)
+	}
+}
+
+// Sister test: a non-expired (ExpiresAt in the future) PAT still resolves.
+// Without this companion, a regression that always rejected ExpiresAt!=nil
+// would still pass the expired test.
+func TestResolvePlaintext_FutureExpiryStillValid(t *testing.T) {
+	st := newSQLite(t)
+	res, err := Generate("future", []string{"account"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0).UTC()
+	future := now.Add(time.Hour)
+	if err := st.Insert(context.Background(), store.Token{
+		ID: res.ID, Name: "future", Scopes: []string{"account"},
+		SecretHash: res.Hash, CreatedAt: now,
+		Kind: store.TokenKindPAT, ExpiresAt: &future,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	auth := New(st.Tokens())
+	auth.Now = func() time.Time { return now }
+
+	tok, err := auth.ResolvePlaintext(context.Background(), res.Plaintext)
+	if err != nil {
+		t.Fatalf("future-expiry token: got %v, want ok", err)
+	}
+	if tok.ID != res.ID {
+		t.Errorf("id: %q want %q", tok.ID, res.ID)
+	}
+}

@@ -106,6 +106,53 @@ func TestUsers_DeactivateCascade_RevokesTokensAndPausesSubs(t *testing.T) {
 	}
 }
 
+// TestUsers_DeactivateCascade_AtomicityOnContextCancel covers task 9.10's
+// "cascading revoke is atomic (failure mid-tx leaves nothing partially
+// deactivated)". Cancelling the context before the cascade runs forces
+// every internal query to fail; defer-rollback must leave the user
+// active, every owned token unrevoked, and every owned sub unpaused.
+func TestUsers_DeactivateCascade_AtomicityOnContextCancel(t *testing.T) {
+	s := newTestStore(t)
+	mustInsertUser(t, s, "u1", "a@example.com", RoleUser)
+	owner := "u1"
+
+	if err := s.Insert(context.Background(), Token{
+		ID: "t1", Name: "x", Scopes: []string{"render"}, SecretHash: "h",
+		CreatedAt: time.Now().UTC(), OwnerUserID: &owner, Kind: TokenKindPAT,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.InsertPush(context.Background(), PushSubscription{
+		ID: "p1", Source: "render", TargetURL: "http://x", SigningSecretHash: "h",
+		CreatedAt: time.Now().UTC(), OwnerUserID: &owner,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel before the call so BeginTx (or the first query) fails
+
+	if _, err := s.DeactivateUserCascade(ctx, "u1", time.Now().UTC()); err == nil {
+		t.Fatal("expected cancellation error, got nil")
+	}
+
+	// User must remain active.
+	u, _ := s.GetUserByID(context.Background(), "u1")
+	if u.DeactivatedAt != nil {
+		t.Errorf("user deactivated despite tx rollback: %v", *u.DeactivatedAt)
+	}
+	// Token must remain unrevoked.
+	tok, _ := s.GetToken(context.Background(), "t1")
+	if tok.RevokedAt != nil {
+		t.Errorf("token revoked despite tx rollback: %v", *tok.RevokedAt)
+	}
+	// Subscription must remain unpaused.
+	sub, _ := s.GetPush(context.Background(), "p1")
+	if sub.PausedAt != nil {
+		t.Errorf("sub paused despite tx rollback: %v", *sub.PausedAt)
+	}
+}
+
 func TestUsers_LastAdminGuard(t *testing.T) {
 	s := newTestStore(t)
 	mustInsertUser(t, s, "a1", "a1@example.com", RoleAdmin)

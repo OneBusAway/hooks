@@ -428,6 +428,93 @@ func TestPATBearer_PATKindAccepted(t *testing.T) {
 	}
 }
 
+// TestCreateToken_BodyOwnerUserIDIgnored covers task 8.10's
+// body-`owner_user_id`-ignored guarantee. createTokenRequest does not
+// declare the field, so the JSON decoder silently drops it; the row's
+// owner is always the calling user. This pins that contract so a
+// future "convenience" addition to the request struct can't introduce
+// a privilege-escalation vector by reading owner_user_id from the body.
+func TestCreateToken_BodyOwnerUserIDIgnored(t *testing.T) {
+	f := newFixture(t, store.RoleUser, []string{"render"})
+	otherID := uuid.NewString()
+	hash, _ := pkgUsers.HashPassword(secret.String("supercalifragilistic"))
+	if err := f.st.InsertUser(context.Background(), store.User{
+		ID:           otherID,
+		Email:        "victim@example.com",
+		Name:         "Victim",
+		Role:         store.RoleUser,
+		PasswordHash: hash,
+		CreatedAt:    time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cookies := f.loginCookies(t)
+	resp := f.do(t, http.MethodPost, "/api/me/tokens", cookies, map[string]any{
+		"name":          "alice-pat",
+		"scopes":        []string{"account"},
+		"owner_user_id": otherID,
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("create: %d body=%s", resp.StatusCode, body)
+	}
+	var view map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&view); err != nil {
+		t.Fatal(err)
+	}
+	id, _ := view["id"].(string)
+	tok, err := f.st.GetToken(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok.OwnerUserID == nil || *tok.OwnerUserID != f.user.ID {
+		t.Errorf("owner_user_id from body was honored; got %v want %s", tok.OwnerUserID, f.user.ID)
+	}
+}
+
+// TestCreateSub_BodyOwnerUserIDIgnored — same guarantee for /api/me/subscriptions.
+func TestCreateSub_BodyOwnerUserIDIgnored(t *testing.T) {
+	f := newFixture(t, store.RoleUser, []string{"render"})
+	otherID := uuid.NewString()
+	hash, _ := pkgUsers.HashPassword(secret.String("supercalifragilistic"))
+	if err := f.st.InsertUser(context.Background(), store.User{
+		ID:           otherID,
+		Email:        "victim2@example.com",
+		Name:         "Victim",
+		Role:         store.RoleUser,
+		PasswordHash: hash,
+		CreatedAt:    time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cookies := f.loginCookies(t)
+	resp := f.do(t, http.MethodPost, "/api/me/subscriptions", cookies, map[string]any{
+		"source":        "render",
+		"target_url":    "https://example.com/hook",
+		"owner_user_id": otherID,
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("create: %d body=%s", resp.StatusCode, body)
+	}
+	rows, err := f.st.ListPushByOwner(context.Background(), f.user.ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("caller owns %d subs (want 1); body owner_user_id may have leaked", len(rows))
+	}
+	stolen, err := f.st.ListPushByOwner(context.Background(), otherID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stolen) != 0 {
+		t.Errorf("victim user owns %d subs (want 0); body owner_user_id was honored", len(stolen))
+	}
+}
+
 func TestRevokeToken_SelfAlias(t *testing.T) {
 	f := newFixture(t, store.RoleUser, []string{"render"})
 	res, err := tokens.Generate("self-pat", []string{"account"})

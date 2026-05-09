@@ -118,3 +118,58 @@ func TestUnknownTokenIs401(t *testing.T) {
 		t.Fatalf("unknown token gave %v", err)
 	}
 }
+
+// TestPATKindCannotAuthorizeSource covers task 8.10's "PAT cannot subscribe → 403"
+// alongside task 8.7's design rule: PATs are for /api/me, not /subscribe.
+// Even with a matching source scope, kind='pat' must yield 403.
+func TestPATKindCannotAuthorizeSource(t *testing.T) {
+	s := newSQLite(t)
+	res, err := Generate("pat", []string{"render"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := "owner-id"
+	if err := s.InsertUser(context.Background(), store.User{
+		ID: owner, Email: "u@example.com", Name: "U",
+		Role: store.RoleUser, PasswordHash: "x",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Insert(context.Background(), store.Token{
+		ID: res.ID, Name: "pat", Scopes: []string{"render"},
+		SecretHash: res.Hash, OwnerUserID: &owner, Kind: store.TokenKindPAT,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	auth := New(s.Tokens())
+	r := httptest.NewRequest(http.MethodGet, "/subscribe/render", nil)
+	r.Header.Set("Authorization", "Bearer "+res.Plaintext)
+	if _, err := auth.AuthorizeSource(r, "render"); !IsForbidden(err) {
+		t.Fatalf("PAT on AuthorizeSource: got %v, want errForbidden", err)
+	}
+}
+
+// Companion: a kind='listener' token with the same scope still works.
+// Pins the kind-split rather than a regression that just rejects every
+// owner-bound token.
+func TestListenerKindAuthorizesSource(t *testing.T) {
+	s := newSQLite(t)
+	res, err := Generate("listener", []string{"render"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Insert(context.Background(), store.Token{
+		ID: res.ID, Name: "listener", Scopes: []string{"render"},
+		SecretHash: res.Hash, Kind: store.TokenKindListener,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	auth := New(s.Tokens())
+	r := httptest.NewRequest(http.MethodGet, "/subscribe/render", nil)
+	r.Header.Set("Authorization", "Bearer "+res.Plaintext)
+	if _, err := auth.AuthorizeSource(r, "render"); err != nil {
+		t.Fatalf("listener AuthorizeSource: %v", err)
+	}
+}

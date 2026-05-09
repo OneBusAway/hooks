@@ -71,6 +71,12 @@ func (a *Authenticator) ResolvePlaintext(ctx context.Context, plaintext string) 
 	if tok.RevokedAt != nil {
 		return store.Token{}, errInvalidToken
 	}
+	// Reject tokens whose absolute expires_at has elapsed. Treat as invalid
+	// (401) rather than forbidden (403): the credential is no longer
+	// authentic, not the request unauthorized.
+	if tok.ExpiresAt != nil && a.Now().After(*tok.ExpiresAt) {
+		return store.Token{}, errInvalidToken
+	}
 	a.maybeTouch(ctx, tok.ID)
 	return tok, nil
 }
@@ -111,10 +117,15 @@ func (a *Authenticator) RequireScope(scope string) func(http.Handler) http.Handl
 
 // AuthorizeSource validates the bearer token and returns it if its scopes
 // include source. Admin scope ALONE does not grant subscribe access.
+// PAT-kind tokens are explicitly rejected per task 8.7: only listener-kind
+// tokens (and legacy rows whose kind is empty) authorize /subscribe/<source>.
 func (a *Authenticator) AuthorizeSource(r *http.Request, source string) (store.Token, error) {
 	tok, err := a.Resolve(r)
 	if err != nil {
 		return store.Token{}, err
+	}
+	if tok.Kind == store.TokenKindPAT {
+		return store.Token{}, errForbidden
 	}
 	if !store.HasScope(tok.Scopes, source) {
 		return store.Token{}, errForbidden

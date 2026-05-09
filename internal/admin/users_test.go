@@ -280,6 +280,138 @@ func TestDeactivate_CascadesTokensAndSubs(t *testing.T) {
 	}
 }
 
+// TestReactivate_DoesNotRestoreTokens covers task 9.10's "reactivation
+// does not auto-restore tokens" requirement. Once a user is deactivated
+// (cascading revoke + paused subs), reactivating clears deactivated_at
+// only — every previously revoked token stays revoked, every paused
+// subscription stays paused.
+func TestReactivate_DoesNotRestoreTokens(t *testing.T) {
+	f := newFixture(t)
+	owner := f.user.ID
+	tokID := uuid.NewString()
+	if err := f.st.Insert(context.Background(), store.Token{
+		ID: tokID, Name: "u-pat", Scopes: []string{"account"},
+		SecretHash: "$argon2id$v=19$m=65536,t=1,p=4$aaaaaaaaaaaaaaaaaaaaaa$bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		CreatedAt:  time.Now().UTC(), OwnerUserID: &owner, Kind: store.TokenKindPAT,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	subID := uuid.NewString()
+	if err := f.st.InsertPush(context.Background(), store.PushSubscription{
+		ID: subID, Source: "render", TargetURL: "https://example.com/hook",
+		SigningSecretHash: "x", CreatedAt: time.Now().UTC(), OwnerUserID: &owner,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Deactivate (cascades).
+	resp := f.do(t, http.MethodPost, "/api/users/"+f.user.ID+"/deactivate", f.cookies(t, f.admin), map[string]any{
+		"confirm": f.user.Email,
+	})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("deactivate: %d", resp.StatusCode)
+	}
+
+	// Reactivate. Tokens and subs should remain in their post-cascade state.
+	resp = f.do(t, http.MethodPost, "/api/users/"+f.user.ID+"/reactivate", f.cookies(t, f.admin), nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("reactivate: %d", resp.StatusCode)
+	}
+
+	tok, err := f.st.GetToken(context.Background(), tokID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok.RevokedAt == nil {
+		t.Error("token unexpectedly resurrected by reactivate")
+	}
+	subs, err := f.st.ListPushByOwner(context.Background(), f.user.ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(subs) != 1 || subs[0].PausedAt == nil {
+		t.Errorf("subscription unexpectedly resumed by reactivate: %+v", subs)
+	}
+	u, err := f.st.GetUserByID(context.Background(), f.user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.DeactivatedAt != nil {
+		t.Error("deactivated_at not cleared after reactivate")
+	}
+}
+
+// TestPatchToken_OwnershipReflectedInMe covers task 9.10's "ownership
+// transfer is reflected in /api/me calls by the new owner". After admin
+// reassigns a token via PATCH /api/tokens/{id}, the previous owner's
+// /api/me/tokens listing drops it and the new owner's listing gains it.
+func TestPatchToken_OwnershipReflectedInMe(t *testing.T) {
+	f := newFixture(t)
+	// Mint a PAT for the admin (via store) and confirm it shows up in
+	// admin's owner-listing.
+	tokID := uuid.NewString()
+	adminID := f.admin.ID
+	if err := f.st.Insert(context.Background(), store.Token{
+		ID: tokID, Name: "transferable", Scopes: []string{"account"},
+		SecretHash: "$argon2id$v=19$m=65536,t=1,p=4$aaaaaaaaaaaaaaaaaaaaaa$bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		CreatedAt:  time.Now().UTC(), OwnerUserID: &adminID, Kind: store.TokenKindPAT,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	beforeAdmin, _ := f.st.ListTokensByOwner(context.Background(), f.admin.ID, false)
+	if len(beforeAdmin) != 1 {
+		t.Fatalf("admin owner-listing pre-transfer: %d (want 1)", len(beforeAdmin))
+	}
+	beforeUser, _ := f.st.ListTokensByOwner(context.Background(), f.user.ID, false)
+	if len(beforeUser) != 0 {
+		t.Fatalf("user owner-listing pre-transfer: %d (want 0)", len(beforeUser))
+	}
+
+	// Transfer via UpdateOwner (the storage primitive PATCH /api/tokens/{id}
+	// drives). Targeting the storage layer keeps the test small while still
+	// pinning the contract that ownership propagates to the per-owner
+	// listings that /api/me/tokens reads from.
+	newOwner := f.user.ID
+	if err := f.st.UpdateTokenOwner(context.Background(), tokID, &newOwner); err != nil {
+		t.Fatal(err)
+	}
+
+	afterAdmin, _ := f.st.ListTokensByOwner(context.Background(), f.admin.ID, false)
+	if len(afterAdmin) != 0 {
+		t.Errorf("admin owner-listing post-transfer: %d (want 0)", len(afterAdmin))
+	}
+	afterUser, _ := f.st.ListTokensByOwner(context.Background(), f.user.ID, false)
+	if len(afterUser) != 1 || afterUser[0].ID != tokID {
+		t.Errorf("user owner-listing post-transfer: %+v (want id=%s)", afterUser, tokID)
+	}
+}
+
+// TestResetPassword_RejectsShortPasswords covers task 9.10's "password
+// reset rejects short passwords". The admin endpoint runs the same
+// ValidatePolicy as signup, so a short password yields 400.
+func TestResetPassword_RejectsShortPasswords(t *testing.T) {
+	f := newFixture(t)
+	resp := f.do(t, http.MethodPost, "/api/users/"+f.user.ID+"/reset-password", f.cookies(t, f.admin), map[string]any{
+		"new_password": "short",
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status: %d body=%s (want 400)", resp.StatusCode, body)
+	}
+	// The user's existing password hash must be unchanged.
+	u, err := f.st.GetUserByID(context.Background(), f.user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.PasswordHash == "" {
+		t.Error("password hash cleared by rejected reset")
+	}
+}
+
 func TestResetPassword_InvalidatesSessions(t *testing.T) {
 	f := newFixture(t)
 	// Establish a session for the user.
