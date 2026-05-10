@@ -21,14 +21,13 @@ import (
 // The signing secret is accepted in either form:
 //   - "whsec_<base64>" (canonical Standard Webhooks form, what Render shows)
 //   - bare bytes (handed straight to HMAC; useful for tests)
-const renderDefaultSkew = 5 * time.Minute
 
 func init() { Default.Register("render", newRenderVerifier) }
 
 func newRenderVerifier(secret string, opts Options) Verifier {
 	skew := opts.SkewWindow
 	if skew == 0 {
-		skew = renderDefaultSkew
+		skew = DefaultSkewWindow
 	}
 	now := opts.Now
 	if now == nil {

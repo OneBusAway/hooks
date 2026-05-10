@@ -1,6 +1,6 @@
 ## hooks
 
-A small, self-hosted relay that durably captures inbound webhooks (Render to start), verifies their signatures, and re-delivers them to one or more developer environments — either pulled over Server-Sent Events or pushed to a registered URL — including replay of anything missed while disconnected.
+A small, self-hosted relay that durably captures inbound webhooks (Render to start), verifies their signatures, and re-delivers them to one or more developer environments — either pulled over Server-Sent Events or pushed to a registered URL — including replay of anything missed while disconnected, bounded by the source's signature-verification skew window so consumers don't reject stale catch-up traffic. (Older events stay in the store and remain available via the inspector's "Replay to listeners" action and `hooksctl replay`.)
 
 To get started: `hooks init`.
 
@@ -104,7 +104,7 @@ In a third terminal, point `hooksctl forward` at whichever local service you're 
 ./bin/hooksctl forward render --to http://localhost:3000/webhooks/render
 ```
 
-`forward` first replays any events you missed (none on first run), then tails live. Bytes hitting your local app are byte-for-byte identical to what Render sent — original headers preserved.
+`forward` first replays any events you missed (none on first run), then tails live. Replay is bounded by the source's signature-verification skew window (5 minutes for Render by default), so events older than that are skipped during the initial catch-up and your local app won't 401 on a stale `webhook-timestamp`. Older events remain in the store and can be redelivered manually via the inspector or `hooksctl replay`. Bytes hitting your local app are byte-for-byte identical to what Render sent — original headers preserved.
 
 ### 7. Trigger a webhook from Render
 

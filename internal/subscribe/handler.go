@@ -10,11 +10,21 @@
 // data is a single line of JSON containing delivery_id, provider_timestamp,
 // received_at, headers, and a base64-encoded body. Bytes round-trip verbatim.
 //
-// The handler runs a replay loop (read from the store in batches of ≤1000
-// until caught up to the current latest sequence) followed by a live loop
-// (select on the per-source notifier channel + a 30s keepalive ticker). On
-// any signal the live loop drains all newer events from the store, so a
-// dropped notify channel signal still lands the affected events.
+// The handler runs an initial-backfill drain (read from the store in batches
+// of ≤1000 until caught up to the current latest sequence) followed by a
+// live loop (select on the per-source notifier channel + a 30s keepalive
+// ticker). On any signal the live loop drains all newer events from the
+// store, so a dropped notify channel signal still lands the affected events.
+//
+// Initial-backfill stale-event filter: events whose provider_timestamp is
+// older than the source's effective skew window (the per-source value from
+// hooks.yaml, falling back to the verifier's 5-minute default — the same
+// effective_skew ingest already enforces) are skipped during the initial
+// drain. The cursor advances past skipped events so reconnects with
+// `?since=<seq>` start past them and the live drain does not re-emit them.
+// Live tail (notifier-triggered or keepalive-triggered drains) is
+// unfiltered. The trade-off is documented in
+// docs/superpowers/specs/2026-05-09-subscribe-stale-backfill-filter-design.md.
 package subscribe
 
 import (
@@ -42,21 +52,35 @@ const (
 )
 
 // Handler serves /subscribe/<source>.
+//
+// Sources maps each allowed source name to its effective skew window — the
+// per-source value from hooks.yaml, or the verifier default if zero/unset.
+// Source membership is determined by key presence (`d, ok := h.Sources[s]`),
+// not value: zero is a legitimate duration and must not be conflated with
+// "unknown source". Resolution to a non-zero default happens upstream in
+// internal/server.Build so the handler itself never sees zero.
 type Handler struct {
 	Store      store.EventStore
 	Notifier   *pubsub.Notifier
 	Auth       *tokens.Authenticator
-	Sources    map[string]bool
+	Sources    map[string]time.Duration
 	Logger     *slog.Logger
 	Keepalive  time.Duration
 	BatchLimit int
+
+	// Now is the clock used by the initial-backfill stale-event filter.
+	// Tests inject a fixed clock; production leaves it nil and falls back
+	// to time.Now.
+	Now func() time.Time
 }
 
-// New constructs a Handler with sensible defaults.
-func New(st store.EventStore, n *pubsub.Notifier, auth *tokens.Authenticator, sources []string, logger *slog.Logger) *Handler {
-	srcSet := map[string]bool{}
-	for _, s := range sources {
-		srcSet[s] = true
+// New constructs a Handler with sensible defaults. sources maps each allowed
+// source name to its already-resolved effective skew window (caller must not
+// pass zero — see Handler.Sources).
+func New(st store.EventStore, n *pubsub.Notifier, auth *tokens.Authenticator, sources map[string]time.Duration, logger *slog.Logger) *Handler {
+	srcSet := make(map[string]time.Duration, len(sources))
+	for s, d := range sources {
+		srcSet[s] = d
 	}
 	if logger == nil {
 		logger = slog.Default()
@@ -79,7 +103,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	source := lastPathSegment(r.URL.Path)
-	if !h.Sources[source] {
+	if _, ok := h.Sources[source]; !ok {
 		http.Error(w, "unknown source", http.StatusNotFound)
 		return
 	}
@@ -129,8 +153,8 @@ func (h *Handler) stream(ctx context.Context, w io.Writer, flusher http.Flusher,
 	ch := h.Notifier.Subscribe(source)
 	defer h.Notifier.Unsubscribe(source, ch)
 
-	// Replay phase.
-	cursor, err := h.drain(ctx, w, flusher, source, cursor, batchLimit)
+	// Initial backfill — filters stale events by age. See package doc.
+	cursor, err := h.initialDrain(ctx, w, flusher, source, cursor, batchLimit)
 	if err != nil {
 		return err
 	}
@@ -146,7 +170,7 @@ func (h *Handler) stream(ctx context.Context, w io.Writer, flusher http.Flusher,
 			if !ok {
 				return errors.New("notifier closed")
 			}
-			cursor, err = h.drain(ctx, w, flusher, source, cursor, batchLimit)
+			cursor, err = h.liveDrain(ctx, w, flusher, source, cursor, batchLimit)
 			if err != nil {
 				return err
 			}
@@ -156,7 +180,7 @@ func (h *Handler) stream(ctx context.Context, w io.Writer, flusher http.Flusher,
 			}
 			flusher.Flush()
 			// Belt-and-suspenders: if we missed a signal, drain anyway.
-			cursor, err = h.drain(ctx, w, flusher, source, cursor, batchLimit)
+			cursor, err = h.liveDrain(ctx, w, flusher, source, cursor, batchLimit)
 			if err != nil {
 				return err
 			}
@@ -164,7 +188,52 @@ func (h *Handler) stream(ctx context.Context, w io.Writer, flusher http.Flusher,
 	}
 }
 
-func (h *Handler) drain(ctx context.Context, w io.Writer, flusher http.Flusher, source string, cursor int64, batchLimit int) (int64, error) {
+// initialDrain reads from the store and emits events to the wire, filtering
+// out events older than the source's effective skew window. Cursor advances
+// on every event whether emitted or skipped: if it didn't, the unfiltered
+// liveDrain that runs next would re-pick the same skipped events from the
+// store and re-emit them on the wire.
+func (h *Handler) initialDrain(ctx context.Context, w io.Writer, flusher http.Flusher, source string, cursor int64, batchLimit int) (int64, error) {
+	skew := h.Sources[source]
+	now := h.now()
+	cutoff := now.Add(-skew)
+	return h.readBatchAndEmit(ctx, w, flusher, source, cursor, batchLimit, func(ev store.Event) bool {
+		// Forward-compat: a missing/zero ProviderTimestamp passes. A
+		// raw time.Time{} round-trips through the store's nanosecond
+		// encoding into a pre-epoch wraparound value (year 1754), so
+		// IsZero() doesn't catch it. The "at or before unix epoch"
+		// sentinel covers both that wraparound and any pre-1970
+		// garbage; real provider timestamps are post-2000.
+		if ev.ProviderTimestamp.Unix() <= 0 {
+			return true
+		}
+		if ev.ProviderTimestamp.Before(cutoff) {
+			h.Logger.Debug("subscribe: skipping stale event on initial backfill",
+				slog.String("source", source),
+				slog.Int64("seq", ev.Sequence),
+				slog.String("delivery_id", ev.DeliveryID),
+				slog.Duration("age", now.Sub(ev.ProviderTimestamp)),
+				slog.Duration("skew_window", skew),
+			)
+			return false
+		}
+		return true
+	})
+}
+
+// liveDrain reads from the store and emits every event unconditionally.
+// Live ingest events are fresh by definition (they just passed the same
+// effective_skew check at ingest), and the inspector "Replay to listeners"
+// path uses Notifier.Publish to wake currently-connected SSE subscribers —
+// that path stays open even for stale events.
+func (h *Handler) liveDrain(ctx context.Context, w io.Writer, flusher http.Flusher, source string, cursor int64, batchLimit int) (int64, error) {
+	return h.readBatchAndEmit(ctx, w, flusher, source, cursor, batchLimit, nil)
+}
+
+// readBatchAndEmit reads ≤batchLimit events at a time starting after cursor
+// and emits each to the wire. If keep is non-nil, an event is written only
+// when keep(ev) is true; cursor advances on every event regardless.
+func (h *Handler) readBatchAndEmit(ctx context.Context, w io.Writer, flusher http.Flusher, source string, cursor int64, batchLimit int, keep func(store.Event) bool) (int64, error) {
 	for {
 		batch, err := h.Store.ReadSince(ctx, source, cursor, batchLimit)
 		if err != nil {
@@ -173,14 +242,28 @@ func (h *Handler) drain(ctx context.Context, w io.Writer, flusher http.Flusher, 
 		if len(batch) == 0 {
 			return cursor, nil
 		}
+		var wrote bool
 		for _, ev := range batch {
+			cursor = ev.Sequence
+			if keep != nil && !keep(ev) {
+				continue
+			}
 			if err := writeEvent(w, ev); err != nil {
 				return cursor, err
 			}
-			cursor = ev.Sequence
+			wrote = true
 		}
-		flusher.Flush()
+		if wrote {
+			flusher.Flush()
+		}
 	}
+}
+
+func (h *Handler) now() time.Time {
+	if h.Now != nil {
+		return h.Now()
+	}
+	return time.Now()
 }
 
 // writeEvent renders an Event as a single SSE message.

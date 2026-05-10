@@ -61,6 +61,12 @@ func (o Options) NowOrDefault() time.Time {
 	return time.Now()
 }
 
+// DefaultSkewWindow is the verifier-default tolerance applied when a source
+// does not configure its own skew_window. Verifier factories fall back to
+// this when Options.SkewWindow is zero, and the SSE initial-backfill filter
+// resolves the same value at the seam in internal/server.
+const DefaultSkewWindow = 5 * time.Minute
+
 // ErrInvalidSignature is returned when the HMAC check fails.
 var ErrInvalidSignature = errors.New("verify: invalid signature")
 
