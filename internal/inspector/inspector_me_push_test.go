@@ -5,7 +5,6 @@ package inspector
 
 import (
 	"context"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -43,13 +42,7 @@ func TestInspectorMePush_OnlyShowsOwnSubscriptions(t *testing.T) {
 	notMine := insertOwnedSub(t, f, bob, "render")
 
 	f.loginAs(t, alice)
-	req, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/me/push", nil)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	resp, body := f.getBody(t, "/me/push")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status: %d, want 200, body=%s", resp.StatusCode, string(body))
 	}
@@ -71,13 +64,7 @@ func TestInspectorMePush_OmitsOwnerColumn(t *testing.T) {
 	insertOwnedSub(t, f, u, "render")
 
 	f.loginAs(t, u)
-	req, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/me/push", nil)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_, body := f.getBody(t, "/me/push")
 	s := string(body)
 	// The owner column header on /push is "<th>Owner</th>".
 	if strings.Contains(s, "<th>Owner</th>") {
@@ -95,13 +82,7 @@ func TestInspectorMePush_AdminSeesFullFleetBanner(t *testing.T) {
 	admin := f.makeUser(t, "admin@example.com", store.RoleAdmin)
 	f.loginAs(t, admin)
 
-	req, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/me/push", nil)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_, body := f.getBody(t, "/me/push")
 	s := string(body)
 	if !strings.Contains(s, "manage every owner") {
 		t.Errorf("admin banner missing full-fleet copy: %s", s)
@@ -120,13 +101,7 @@ func TestInspectorMePush_NonAdminDoesNotSeeFullFleetBanner(t *testing.T) {
 	u := f.makeUser(t, "user@example.com", store.RoleUser)
 	f.loginAs(t, u)
 
-	req, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/me/push", nil)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_, body := f.getBody(t, "/me/push")
 	s := string(body)
 	if strings.Contains(s, "manage every owner") {
 		t.Errorf("non-admin saw admin banner copy: %s", s)
@@ -143,18 +118,7 @@ func TestInspectorMePush_PauseOwnSub(t *testing.T) {
 	csrf := "csrf-pause"
 	f.primeCSRF(t, csrf)
 
-	form := url.Values{"csrf_token": {csrf}}
-	req, _ := http.NewRequest(http.MethodPost,
-		f.srv.URL+"/me/push/"+mine.ID+"/pause",
-		strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Origin", f.srv.URL)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
+	resp, _ := f.postCSRF(t, "/me/push/"+mine.ID+"/pause", url.Values{"csrf_token": {csrf}})
 	if resp.StatusCode != http.StatusSeeOther && resp.StatusCode != http.StatusFound {
 		t.Fatalf("status: %d, want 303/302", resp.StatusCode)
 	}
@@ -179,18 +143,7 @@ func TestInspectorMePush_CannotPauseOtherUsersSub(t *testing.T) {
 	csrf := "csrf-x"
 	f.primeCSRF(t, csrf)
 
-	form := url.Values{"csrf_token": {csrf}}
-	req, _ := http.NewRequest(http.MethodPost,
-		f.srv.URL+"/me/push/"+bobs.ID+"/pause",
-		strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Origin", f.srv.URL)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
+	resp, _ := f.postCSRF(t, "/me/push/"+bobs.ID+"/pause", url.Values{"csrf_token": {csrf}})
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status: %d, want 404", resp.StatusCode)
 	}
@@ -216,18 +169,7 @@ func TestInspectorMePush_ResumeOwnSub(t *testing.T) {
 	csrf := "csrf-resume"
 	f.primeCSRF(t, csrf)
 
-	form := url.Values{"csrf_token": {csrf}}
-	req, _ := http.NewRequest(http.MethodPost,
-		f.srv.URL+"/me/push/"+mine.ID+"/resume",
-		strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Origin", f.srv.URL)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
+	resp, _ := f.postCSRF(t, "/me/push/"+mine.ID+"/resume", url.Values{"csrf_token": {csrf}})
 	if resp.StatusCode != http.StatusSeeOther && resp.StatusCode != http.StatusFound {
 		t.Fatalf("status: %d, want 303/302", resp.StatusCode)
 	}
@@ -250,18 +192,7 @@ func TestInspectorMePush_DeleteOwnSub(t *testing.T) {
 	csrf := "csrf-del"
 	f.primeCSRF(t, csrf)
 
-	form := url.Values{"csrf_token": {csrf}}
-	req, _ := http.NewRequest(http.MethodPost,
-		f.srv.URL+"/me/push/"+mine.ID+"/delete",
-		strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Origin", f.srv.URL)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
+	resp, _ := f.postCSRF(t, "/me/push/"+mine.ID+"/delete", url.Values{"csrf_token": {csrf}})
 	if resp.StatusCode != http.StatusSeeOther && resp.StatusCode != http.StatusFound {
 		t.Fatalf("status: %d, want 303/302", resp.StatusCode)
 	}
@@ -280,16 +211,7 @@ func TestInspectorMePush_PauseRequiresCSRF(t *testing.T) {
 	f.primeCSRF(t, "real-csrf")
 
 	// no csrf_token in form
-	req, _ := http.NewRequest(http.MethodPost,
-		f.srv.URL+"/me/push/"+mine.ID+"/pause",
-		strings.NewReader(""))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
+	resp, _ := f.postForm(t, "/me/push/"+mine.ID+"/pause", url.Values{})
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status: %d, want 403", resp.StatusCode)
 	}
@@ -305,18 +227,7 @@ func TestInspectorMePush_RotateOwnSecret(t *testing.T) {
 	csrf := "csrf-rot"
 	f.primeCSRF(t, csrf)
 
-	form := url.Values{"csrf_token": {csrf}}
-	req, _ := http.NewRequest(http.MethodPost,
-		f.srv.URL+"/me/push/"+mine.ID+"/rotate",
-		strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Origin", f.srv.URL)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	resp, body := f.postCSRF(t, "/me/push/"+mine.ID+"/rotate", url.Values{"csrf_token": {csrf}})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status: %d, want 200, body=%s", resp.StatusCode, string(body))
 	}

@@ -118,6 +118,50 @@ func (f *sessionFixture) get(t *testing.T, path string) *http.Response {
 	return resp
 }
 
+// getBody is like get but returns the response body as a string.
+func (f *sessionFixture) getBody(t *testing.T, path string) (*http.Response, string) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, f.srv.URL+path, nil)
+	resp, err := f.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	return resp, string(body)
+}
+
+// postForm POSTs path with form-encoded values and returns the response
+// plus body.
+func (f *sessionFixture) postForm(t *testing.T, path string, form url.Values) (*http.Response, string) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, f.srv.URL+path, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := f.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	return resp, string(body)
+}
+
+// postCSRF is postForm with the Origin header set to the test server so
+// the request passes the CSRF middleware's same-origin check.
+func (f *sessionFixture) postCSRF(t *testing.T, path string, form url.Values) (*http.Response, string) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, f.srv.URL+path, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", f.srv.URL)
+	resp, err := f.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	return resp, string(body)
+}
+
 // TestInspector_AnonymousRedirectsToLoginNext: an anonymous GET / redirects
 // to /login?next=/.
 func TestInspector_AnonymousRedirectsToLoginNext(t *testing.T) {
@@ -177,16 +221,7 @@ func TestInspector_NonAdminMutationReturns403(t *testing.T) {
 	u := f.makeUser(t, "user@example.com", store.RoleUser)
 	f.loginAs(t, u)
 
-	form := url.Values{"name": {"foo"}, "scopes": {"render"}}
-	req, _ := http.NewRequest(http.MethodPost, f.srv.URL+"/tokens/create",
-		strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
+	resp, _ := f.postForm(t, "/tokens/create", url.Values{"name": {"foo"}, "scopes": {"render"}})
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status: %d, want 403", resp.StatusCode)
 	}
@@ -196,16 +231,7 @@ func TestInspector_NonAdminMutationReturns403(t *testing.T) {
 // POST returns 401 (no redirect for mutations).
 func TestInspector_AnonymousMutationReturns401(t *testing.T) {
 	f := newSessionFixture(t)
-	form := url.Values{"name": {"foo"}, "scopes": {"render"}}
-	req, _ := http.NewRequest(http.MethodPost, f.srv.URL+"/tokens/create",
-		strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
+	resp, _ := f.postForm(t, "/tokens/create", url.Values{"name": {"foo"}, "scopes": {"render"}})
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status: %d, want 401", resp.StatusCode)
 	}

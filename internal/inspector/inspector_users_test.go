@@ -7,7 +7,6 @@ package inspector
 
 import (
 	"context"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -109,17 +108,11 @@ func TestInspectorUsers_AdminSeesUserTable(t *testing.T) {
 	other := f.makeUser(t, "other@example.com", store.RoleUser)
 	f.loginAs(t, admin)
 
-	req, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/users", nil)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	resp, body := f.getBody(t, "/users")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status: %d, want 200; body=%s", resp.StatusCode, body)
 	}
-	bs := string(body)
+	bs := body
 	if !strings.Contains(bs, admin.Email) {
 		t.Errorf("body missing admin email: %s", bs)
 	}
@@ -142,25 +135,15 @@ func TestInspectorUsers_InviteCreatesRowAndShowsURL(t *testing.T) {
 	csrf := "csrf-invite"
 	f.primeCSRF(t, csrf)
 
-	form := url.Values{
+	resp, body := f.postCSRF(t, "/users/invite", url.Values{
 		"role":       {"user"},
 		"scopes":     {"render"},
 		"csrf_token": {csrf},
-	}
-	req, _ := http.NewRequest(http.MethodPost, f.srv.URL+"/users/invite",
-		strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Origin", f.srv.URL)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status: %d, want 200; body=%s", resp.StatusCode, body)
 	}
-	if !strings.Contains(string(body), "/signup?code=") {
+	if !strings.Contains(body, "/signup?code=") {
 		t.Errorf("expected signup URL banner, body=%s", body)
 	}
 
@@ -188,17 +171,7 @@ func TestInspectorUsers_InviteRequiresCSRF(t *testing.T) {
 	f.loginAs(t, admin)
 	f.primeCSRF(t, "the-real")
 
-	form := url.Values{"role": {"user"}}
-	req, _ := http.NewRequest(http.MethodPost, f.srv.URL+"/users/invite",
-		strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Origin", f.srv.URL)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
+	resp, _ := f.postCSRF(t, "/users/invite", url.Values{"role": {"user"}})
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status: %d, want 403", resp.StatusCode)
 	}
@@ -214,21 +187,10 @@ func TestInspectorUsers_DeactivateRequiresEmailConfirm(t *testing.T) {
 	csrf := "csrf-deact"
 	f.primeCSRF(t, csrf)
 
-	form := url.Values{
+	resp, _ := f.postCSRF(t, "/users/"+target.ID+"/deactivate", url.Values{
 		"confirm":    {"WRONG@example.com"},
 		"csrf_token": {csrf},
-	}
-	req, _ := http.NewRequest(http.MethodPost,
-		f.srv.URL+"/users/"+target.ID+"/deactivate",
-		strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Origin", f.srv.URL)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
+	})
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status: %d, want 400", resp.StatusCode)
 	}
@@ -252,21 +214,10 @@ func TestInspectorUsers_DeactivateSuccess(t *testing.T) {
 	csrf := "csrf-deact-ok"
 	f.primeCSRF(t, csrf)
 
-	form := url.Values{
+	resp, _ := f.postCSRF(t, "/users/"+target.ID+"/deactivate", url.Values{
 		"confirm":    {target.Email},
 		"csrf_token": {csrf},
-	}
-	req, _ := http.NewRequest(http.MethodPost,
-		f.srv.URL+"/users/"+target.ID+"/deactivate",
-		strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Origin", f.srv.URL)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
+	})
 	if resp.StatusCode != http.StatusSeeOther && resp.StatusCode != http.StatusFound {
 		t.Fatalf("status: %d, want 303/302", resp.StatusCode)
 	}
@@ -288,21 +239,10 @@ func TestInspectorUsers_DeactivateRefusesLastAdmin(t *testing.T) {
 	csrf := "csrf-last"
 	f.primeCSRF(t, csrf)
 
-	form := url.Values{
+	resp, _ := f.postCSRF(t, "/users/"+admin.ID+"/deactivate", url.Values{
 		"confirm":    {admin.Email},
 		"csrf_token": {csrf},
-	}
-	req, _ := http.NewRequest(http.MethodPost,
-		f.srv.URL+"/users/"+admin.ID+"/deactivate",
-		strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Origin", f.srv.URL)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
+	})
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("status: %d, want 409", resp.StatusCode)
 	}
@@ -327,18 +267,7 @@ func TestInspectorUsers_Reactivate(t *testing.T) {
 	csrf := "csrf-react"
 	f.primeCSRF(t, csrf)
 
-	form := url.Values{"csrf_token": {csrf}}
-	req, _ := http.NewRequest(http.MethodPost,
-		f.srv.URL+"/users/"+target.ID+"/reactivate",
-		strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Origin", f.srv.URL)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
+	resp, _ := f.postCSRF(t, "/users/"+target.ID+"/reactivate", url.Values{"csrf_token": {csrf}})
 	if resp.StatusCode != http.StatusSeeOther && resp.StatusCode != http.StatusFound {
 		t.Fatalf("status: %d, want 303/302", resp.StatusCode)
 	}
@@ -366,21 +295,10 @@ func TestInspectorUsers_ResetPasswordChangesHash(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	form := url.Values{
+	resp, _ := f.postCSRF(t, "/users/"+target.ID+"/reset-password", url.Values{
 		"new_password": {"a-fresh-passphrase-1234"},
 		"csrf_token":   {csrf},
-	}
-	req, _ := http.NewRequest(http.MethodPost,
-		f.srv.URL+"/users/"+target.ID+"/reset-password",
-		strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Origin", f.srv.URL)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
+	})
 	if resp.StatusCode != http.StatusSeeOther && resp.StatusCode != http.StatusFound {
 		t.Fatalf("status: %d, want 303/302", resp.StatusCode)
 	}
@@ -403,21 +321,10 @@ func TestInspectorUsers_ResetPasswordRejectsShort(t *testing.T) {
 	csrf := "csrf-short"
 	f.primeCSRF(t, csrf)
 
-	form := url.Values{
+	resp, _ := f.postCSRF(t, "/users/"+target.ID+"/reset-password", url.Values{
 		"new_password": {"short"},
 		"csrf_token":   {csrf},
-	}
-	req, _ := http.NewRequest(http.MethodPost,
-		f.srv.URL+"/users/"+target.ID+"/reset-password",
-		strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Origin", f.srv.URL)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
+	})
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status: %d, want 400", resp.StatusCode)
 	}
@@ -433,21 +340,10 @@ func TestInspectorUsers_UpdateScopes(t *testing.T) {
 	csrf := "csrf-scopes"
 	f.primeCSRF(t, csrf)
 
-	form := url.Values{
+	resp, _ := f.postCSRF(t, "/users/"+target.ID+"/update", url.Values{
 		"default_scopes": {"render,stripe"},
 		"csrf_token":     {csrf},
-	}
-	req, _ := http.NewRequest(http.MethodPost,
-		f.srv.URL+"/users/"+target.ID+"/update",
-		strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Origin", f.srv.URL)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
+	})
 	if resp.StatusCode != http.StatusSeeOther && resp.StatusCode != http.StatusFound {
 		t.Fatalf("status: %d, want 303/302", resp.StatusCode)
 	}

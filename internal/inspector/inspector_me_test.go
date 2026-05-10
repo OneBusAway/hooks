@@ -91,13 +91,7 @@ func TestInspectorMe_ShowsProfile(t *testing.T) {
 	u := f.makeUser(t, "user@example.com", store.RoleUser)
 	f.loginAs(t, u)
 
-	req, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/me", nil)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	resp, body := f.getBody(t, "/me")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status: %d, want 200, body=%s", resp.StatusCode, string(body))
 	}
@@ -120,13 +114,7 @@ func TestInspectorMe_OnlyShowsOwnTokens(t *testing.T) {
 	notMine := insertOwnedToken(t, f, bob, "bob-pat", store.TokenKindPAT, []string{"render", "account"})
 
 	f.loginAs(t, alice)
-	req, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/me", nil)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	resp, body := f.getBody(t, "/me")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status: %d, want 200, body=%s", resp.StatusCode, string(body))
 	}
@@ -147,14 +135,8 @@ func TestInspectorMe_KindFilterHidesOtherKinds(t *testing.T) {
 	lst := insertOwnedToken(t, f, u, "l-mine", store.TokenKindListener, []string{"render"})
 
 	f.loginAs(t, u)
-	req, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/me?kind=pat", nil)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	s := string(body)
+	_, body := f.getBody(t, "/me?kind=pat")
+	s := body
 	if !strings.Contains(s, pat.Name) {
 		t.Errorf("kind=pat should still show pat token: %s", s)
 	}
@@ -174,13 +156,7 @@ func TestInspectorMe_OnlyShowsOwnSubscriptions(t *testing.T) {
 	notMine := insertOwnedSub(t, f, bob, "render")
 
 	f.loginAs(t, alice)
-	req, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/me", nil)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_, body := f.getBody(t, "/me")
 	if !strings.Contains(string(body), mine.ID) {
 		t.Errorf("missing own sub id: %s", string(body))
 	}
@@ -196,13 +172,7 @@ func TestInspectorMe_AdminSeesAdminLinks(t *testing.T) {
 	admin := f.makeUser(t, "admin@example.com", store.RoleAdmin)
 	f.loginAs(t, admin)
 
-	req, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/me", nil)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_, body := f.getBody(t, "/me")
 	s := string(body)
 	if !strings.Contains(s, "/users") {
 		t.Errorf("admin missing /users link: %s", s)
@@ -217,13 +187,7 @@ func TestInspectorMe_NonAdminDoesNotSeeAdminLinks(t *testing.T) {
 	u := f.makeUser(t, "user@example.com", store.RoleUser)
 	f.loginAs(t, u)
 
-	req, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/me", nil)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_, body := f.getBody(t, "/me")
 	s := string(body)
 	if strings.Contains(s, `href="/users"`) {
 		t.Errorf("non-admin saw /users link: %s", s)
