@@ -1,6 +1,6 @@
 {{define "detail"}}{{template "header" .}}
 <h1>Event {{.Event.Source}} #{{.Event.Sequence}}</h1>
-<p><a href="/inspector">&larr; back</a></p>
+<p><a href="/">&larr; back</a></p>
 
 <dl class="meta">
   <dt>Source</dt><dd>{{.Event.Source}}</dd>
@@ -11,7 +11,7 @@
   <dt>body sha256</dt><dd><code>{{.Event.BodySHA256}}</code></dd>
 </dl>
 
-<form method="post" action="/inspector/events/{{.Event.Source}}/{{.Event.Sequence}}/replay" class="action-row">
+<form method="post" action="/events/{{.Event.Source}}/{{.Event.Sequence}}/replay" class="action-row">
   <button type="submit">Replay to listeners</button>
 </form>
 

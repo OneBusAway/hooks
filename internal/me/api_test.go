@@ -428,12 +428,12 @@ func TestPATBearer_PATKindAccepted(t *testing.T) {
 	}
 }
 
-// TestCreateToken_BodyOwnerUserIDIgnored covers task 8.10's
-// body-`owner_user_id`-ignored guarantee. createTokenRequest does not
-// declare the field, so the JSON decoder silently drops it; the row's
-// owner is always the calling user. This pins that contract so a
-// future "convenience" addition to the request struct can't introduce
-// a privilege-escalation vector by reading owner_user_id from the body.
+// TestCreateToken_BodyOwnerUserIDIgnored pins the body-`owner_user_id`-
+// ignored guarantee. createTokenRequest does not declare the field, so the
+// JSON decoder silently drops it; the row's owner is always the calling
+// user. This pins that contract so a future "convenience" addition to the
+// request struct can't introduce a privilege-escalation vector by reading
+// owner_user_id from the body.
 func TestCreateToken_BodyOwnerUserIDIgnored(t *testing.T) {
 	f := newFixture(t, store.RoleUser, []string{"render"})
 	otherID := uuid.NewString()

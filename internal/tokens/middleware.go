@@ -117,7 +117,7 @@ func (a *Authenticator) RequireScope(scope string) func(http.Handler) http.Handl
 
 // AuthorizeSource validates the bearer token and returns it if its scopes
 // include source. Admin scope ALONE does not grant subscribe access.
-// PAT-kind tokens are explicitly rejected per task 8.7: only listener-kind
+// PAT-kind tokens are explicitly rejected : only listener-kind
 // tokens (and legacy rows whose kind is empty) authorize /subscribe/<source>.
 func (a *Authenticator) AuthorizeSource(r *http.Request, source string) (store.Token, error) {
 	tok, err := a.Resolve(r)

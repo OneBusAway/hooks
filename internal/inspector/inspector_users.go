@@ -1,10 +1,10 @@
 package inspector
 
-// /inspector/users (task 11.5): admin-only user table, "Issue invite"
+// /users: admin-only user table, "Issue invite"
 // form, per-row deactivate (with email confirmation field; refuses
 // last-admin), reactivate, reset-password, and edit-default-scopes.
 // Every mutation is CSRF-protected by the same web.Middleware that
-// guards /inspector/me/*.
+// guards /me/*.
 //
 // The page intentionally re-uses the existing /api/users/* business
 // logic rather than reaching into store directly: it calls the same
@@ -25,7 +25,7 @@ import (
 	"github.com/onebusaway/hooks/internal/store"
 )
 
-// userRow is one row in the /inspector/users table.
+// userRow is one row in the /users table.
 type userRow struct {
 	ID            string
 	Email         string
@@ -108,21 +108,13 @@ func (in *Inspector) usersInvite(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	exp := now.Add(invites.DefaultInviteTTL)
-	// CreatedByUserID is left nil on the legacy raw-bearer cookie path:
-	// that cookie has no associated user row, and the column FKs to
-	// users(id). Session-authenticated admins get correct attribution.
-	var createdByPtr *string
-	if in.Sessions != nil {
-		if caller, _, ok := in.Sessions.FromContext(r.Context()); ok && caller.ID != "" {
-			id := caller.ID
-			createdByPtr = &id
-		}
-	}
+	caller, _, _ := in.Sessions.FromContext(r.Context())
+	createdBy := caller.ID
 	inv := store.Invite{
 		Code:            code,
 		Role:            role,
 		DefaultScopes:   scopes,
-		CreatedByUserID: createdByPtr,
+		CreatedByUserID: &createdBy,
 		Bootstrap:       false,
 		CreatedAt:       now,
 		ExpiresAt:       &exp,
@@ -144,31 +136,22 @@ func (in *Inspector) usersInvite(w http.ResponseWriter, r *http.Request) {
 	in.renderUsers(w, r, banner)
 }
 
-// recordUsersAudit emits an audit event attributed to the calling
-// session-cookie user for any /inspector/users mutation. The "via"
-// metadata is automatically tagged so audit consumers can distinguish
-// inspector clicks from JSON API calls. When the caller arrived via the
-// legacy raw-bearer cookie path (no session), ActorUserID is left nil
-// — the legacy cookie has no associated user row, and an FK to a
-// non-existent users.id would fail to insert.
+// recordUsersAudit emits an audit event for a /users mutation, attributed
+// to the caller and tagged via=inspector/users so audit consumers can tell
+// inspector clicks from JSON API calls.
 func (in *Inspector) recordUsersAudit(r *http.Request, action audit.Action, targetType audit.TargetType, targetID string, extra map[string]any) {
 	if in.Audit == nil {
 		return
 	}
-	var actorPtr *string
-	if in.Sessions != nil {
-		if caller, _, ok := in.Sessions.FromContext(r.Context()); ok && caller.ID != "" {
-			id := caller.ID
-			actorPtr = &id
-		}
-	}
+	caller, _, _ := in.Sessions.FromContext(r.Context())
+	actor := caller.ID
 	meta := make(map[string]any, len(extra)+1)
 	for k, v := range extra {
 		meta[k] = v
 	}
 	meta["via"] = "inspector/users"
 	in.Audit.Record(r.Context(), store.AuditEvent{
-		ActorUserID: actorPtr,
+		ActorUserID: &actor,
 		Action:      action,
 		TargetType:  targetType,
 		TargetID:    targetID,
@@ -247,7 +230,7 @@ func (in *Inspector) usersDeactivate(w http.ResponseWriter, r *http.Request) {
 		"tokens_revoked":       res.TokensRevoked,
 		"subscriptions_paused": res.SubscriptionsPaused,
 	})
-	http.Redirect(w, r, "/inspector/users", http.StatusSeeOther)
+	http.Redirect(w, r, "/users", http.StatusSeeOther)
 }
 
 // usersReactivate clears deactivated_at on the target user. Tokens and
@@ -267,7 +250,7 @@ func (in *Inspector) usersReactivate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.recordUsersAudit(r, audit.ActionUserReactivate, audit.TargetTypeUser, id, nil)
-	http.Redirect(w, r, "/inspector/users", http.StatusSeeOther)
+	http.Redirect(w, r, "/users", http.StatusSeeOther)
 }
 
 // usersResetPassword sets a new password hash for the target user and
@@ -328,7 +311,7 @@ func (in *Inspector) usersResetPassword(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	in.recordUsersAudit(r, audit.ActionUserPasswordReset, audit.TargetTypeUser, id, nil)
-	http.Redirect(w, r, "/inspector/users", http.StatusSeeOther)
+	http.Redirect(w, r, "/users", http.StatusSeeOther)
 }
 
 // usersUpdate edits the target's name and/or default_scopes. The form
@@ -373,7 +356,7 @@ func (in *Inspector) usersUpdate(w http.ResponseWriter, r *http.Request) {
 		"name":           name,
 		"default_scopes": scopes,
 	})
-	http.Redirect(w, r, "/inspector/users", http.StatusSeeOther)
+	http.Redirect(w, r, "/users", http.StatusSeeOther)
 }
 
 // parseScopesField splits "render,stripe ,  foo" into ["render","stripe","foo"].

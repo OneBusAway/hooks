@@ -21,7 +21,7 @@ Failed verification produces HTTP 401 with no body. Logs include only the source
 - `hooksctl token list` and `/api/tokens` GET return only metadata (id, name, scopes, timestamps). No path returns the plaintext after issuance.
 - Revoked tokens are rejected within one round-trip; `last_used_at` is updated best-effort.
 
-The special scope `admin` grants access to `/inspector`, `/api/tokens`, and `/api/push-subscriptions`. It does **not** implicitly grant subscribe access — an admin token MUST also include the source name in its scopes to subscribe.
+The special scope `admin` grants access to the inspector UI, `/api/tokens`, and `/api/push-subscriptions`. It does **not** implicitly grant subscribe access — an admin token MUST also include the source name in its scopes to subscribe.
 
 ### Ephemeral listener tokens
 
@@ -127,7 +127,7 @@ Excess requests return HTTP 429 with `Retry-After: <seconds>`. Buckets live in p
 
 ### Audit log
 
-Every admin-meaningful action is recorded in the append-only `audit_events` table. Surfaced at `/inspector/audit` (admin only). Tracked actions:
+Every admin-meaningful action is recorded in the append-only `audit_events` table. Surfaced at `/audit` (admin only). Tracked actions:
 
 - `invite.create`, `invite.revoke`, `invite.consume`
 - `user.create`, `user.deactivate`, `user.reactivate`, `user.role_change`, `user.update`, `user.password_reset`

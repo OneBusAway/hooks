@@ -10,7 +10,7 @@
 {{end}}
 
 <h2>Issue invite</h2>
-<form method="post" action="/inspector/users/invite" class="form-row">
+<form method="post" action="/users/invite" class="form-row">
   <label>Role
     <select name="role">
       <option value="user">user</option>
@@ -32,7 +32,7 @@
     <td>{{.Name}}</td>
     <td>{{.Role}}</td>
     <td>
-      <form method="post" action="/inspector/users/{{.ID}}/update" class="inline">
+      <form method="post" action="/users/{{.ID}}/update" class="inline">
         <input type="text" name="default_scopes" value="{{range $i, $s := .DefaultScopes}}{{if $i}},{{end}}{{$s}}{{end}}" placeholder="render,stripe">
         <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
         <button type="submit">Save</button>
@@ -42,18 +42,18 @@
     <td>{{if .DeactivatedAt}}<span class="tag">deactivated</span>{{else}}<span class="tag">active</span>{{end}}</td>
     <td>
       {{if .DeactivatedAt}}
-      <form method="post" action="/inspector/users/{{.ID}}/reactivate" class="inline">
+      <form method="post" action="/users/{{.ID}}/reactivate" class="inline">
         <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
         <button type="submit">Reactivate</button>
       </form>
       {{else}}
-      <form method="post" action="/inspector/users/{{.ID}}/deactivate" class="inline" onsubmit="return confirm('Type {{.Email}} to confirm deactivation. The form requires the email below to match.');">
+      <form method="post" action="/users/{{.ID}}/deactivate" class="inline" onsubmit="return confirm('Type {{.Email}} to confirm deactivation. The form requires the email below to match.');">
         <label class="muted">Confirm email <input type="text" name="confirm" placeholder="{{.Email}}" required></label>
         <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
         <button type="submit" class="danger">Deactivate</button>
       </form>
       {{end}}
-      <form method="post" action="/inspector/users/{{.ID}}/reset-password" class="inline">
+      <form method="post" action="/users/{{.ID}}/reset-password" class="inline">
         <input type="password" name="new_password" placeholder="new password" required>
         <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
         <button type="submit">Reset password</button>

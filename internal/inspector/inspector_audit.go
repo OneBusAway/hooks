@@ -1,6 +1,6 @@
 package inspector
 
-// /inspector/audit (tasks 10.4, 11.6): admin-only HTML view of the
+// /audit: admin-only HTML view of the
 // audit_events log. Renders rows ordered by `at DESC` with the actor email
 // resolved via UserStore (falling back to the raw user id when the user
 // row is missing). Optional ?since= and ?until= RFC3339 query parameters
@@ -25,7 +25,7 @@ const (
 	auditMaxLimit     = 1000
 )
 
-// auditRow is one rendered row in the /inspector/audit table.
+// auditRow is one rendered row in the /audit table.
 type auditRow struct {
 	ID           string
 	At           time.Time

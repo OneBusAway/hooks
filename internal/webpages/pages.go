@@ -193,7 +193,7 @@ func (p *Pages) LoginPOST(w http.ResponseWriter, r *http.Request) {
 
 	dest := next
 	if dest == "" {
-		dest = "/inspector"
+		dest = "/"
 	}
 	http.Redirect(w, r, dest, http.StatusSeeOther)
 }

@@ -1,9 +1,9 @@
-// Package inspector serves the admin-only web UI at /inspector.
+// Package inspector serves the admin web UI mounted at the root of the
+// hooks server (/, /me, /tokens, /push, /users, /audit, ...).
 //
 // All assets (HTML templates and CSS) are embedded so the deployment is one
-// statically-linked binary. Authentication uses a cookie scoped to /inspector
-// containing the same plaintext bearer token the API uses; the server-side
-// lookup is identical (Argon2id constant-time compare).
+// statically-linked binary. Authentication is the hooks_session cookie
+// issued by /login.
 package inspector
 
 import (
@@ -39,48 +39,35 @@ var templatesFS embed.FS
 //go:embed static/*
 var staticFS embed.FS
 
-const cookieName = "hooks_inspector_token"
-
 // Cascader runs the deactivate-and-cascade transaction. Implemented by
 // store.SQLite.DeactivateUserCascade. The same shape is in admin.API.
 type Cascader interface {
 	DeactivateUserCascade(ctx context.Context, id string, when time.Time) (store.CascadeRevokeResult, error)
 }
 
-// Inspector is the http handler set for /inspector.
+// Inspector is the http handler set for the inspector web UI.
 type Inspector struct {
 	Events   store.EventStore
 	Tokens   store.TokenStore
 	Subs     store.PushSubscriptionStore
 	Notifier *pubsub.Notifier
 	Push     *push.Manager
-	Auth     *tokens.Authenticator
-	// Sessions, when non-nil, enables session-cookie authentication on the
-	// inspector router (task 11.12). The middleware runs before each
-	// handler so requireAdmin can read (*User, *Session) from context. A
-	// nil Sessions falls back to the legacy hooks_inspector_token bearer
-	// cookie path only.
+	// Sessions enables session-cookie authentication; nil means the
+	// inspector refuses every request as anonymous (no other auth path
+	// remains).
 	Sessions *auth.Manager
-	// Audit, when set, receives a token.create / token.revoke entry every
-	// time /inspector/me/tokens (task 11.4) issues or revokes a PAT. The
-	// session-attached User on each request comes from auth.Manager's
-	// per-request lookup, so a separate UserStore reference would be a
-	// stale read; omit it here.
+	// Audit, when set, receives a token.create / token.revoke entry on
+	// every PAT mint or revoke through /me/tokens.
 	Audit audit.Recorder
-	// Users, when set, lets /inspector/tokens, /inspector/push, and
-	// /inspector/audit render an "owner" / "actor" column with the user's
-	// email instead of a bare id (tasks 11.8, 11.9, 11.6). When nil, those
-	// views fall back to printing the raw user id (or "system" for NULL).
+	// Users, when set, lets /tokens, /push, and /audit render an owner /
+	// actor column with the user's email instead of a bare id.
 	Users store.UserStore
-	// AuditReader, when set, powers /inspector/audit (task 11.6). Reads
-	// audit_events ordered by `at DESC` with optional time-range filters
-	// pulled from the request query string.
+	// AuditReader, when set, powers /audit. Reads audit_events ordered by
+	// `at DESC` with optional time-range filters from the query string.
 	AuditReader store.AuditStore
-	// Invites, Cascader, HashPassword, and ValidatePolicy power the
-	// /inspector/users admin page (task 11.5). They mirror the wiring on
-	// invites.API and admin.API so the inspector and JSON surfaces share
-	// the same business logic. When unset the admin page degrades to a
-	// read-only view (writes return 503).
+	// Invites, Cascader, HashPassword, and ValidatePolicy power the /users
+	// admin page; mirror the wiring on invites.API and admin.API. When
+	// unset the page degrades to a read-only view (writes return 503).
 	Invites        store.InviteStore
 	Cascader       Cascader
 	HashPassword   func(plaintext string) (string, error)
@@ -91,14 +78,16 @@ type Inspector struct {
 	staticSub      fs.FS
 }
 
-// New constructs an Inspector. Templates are parsed at construction.
+// New constructs an Inspector. Templates are parsed at construction. The
+// caller MUST set Sessions on the returned value before calling Register
+// — without it, every request resolves as anonymous and redirects to
+// /login.
 func New(
 	events store.EventStore,
 	ts store.TokenStore,
 	subs store.PushSubscriptionStore,
 	notifier *pubsub.Notifier,
 	pushMgr *push.Manager,
-	auth *tokens.Authenticator,
 	configuredSources []string,
 	logger *slog.Logger,
 ) (*Inspector, error) {
@@ -116,16 +105,15 @@ func New(
 	return &Inspector{
 		Events: events, Tokens: ts, Subs: subs,
 		Notifier: notifier, Push: pushMgr,
-		Auth: auth, Logger: logger,
+		Logger:  logger,
 		Sources: configuredSources,
 		tpls:    tpls, staticSub: sub,
 	}, nil
 }
 
-// Register mounts inspector routes onto mux. If in.Sessions is non-nil
-// (task 11.12), each handler is wrapped in the session middleware so the
-// inspector can authenticate via the hooks_session cookie alongside the
-// legacy hooks_inspector_token bearer cookie.
+// Register mounts inspector routes onto mux. Each handler is wrapped in
+// in.Sessions.Middleware (when set) so requireAdmin can read the session
+// from request context.
 func (in *Inspector) Register(mux *http.ServeMux) {
 	wrap := func(h http.HandlerFunc) http.Handler {
 		if in.Sessions == nil {
@@ -142,120 +130,78 @@ func (in *Inspector) Register(mux *http.ServeMux) {
 		return in.Sessions.Middleware(h)
 	}
 
-	mux.Handle("GET /inspector/static/", http.StripPrefix("/inspector/static/", http.FileServer(http.FS(in.staticSub))))
-	mux.Handle("GET /inspector/login", wrap(in.loginGET))
-	mux.Handle("POST /inspector/login", wrap(in.loginPOST))
-	mux.Handle("GET /inspector/logout", wrap(in.logout))
-	mux.Handle("GET /inspector", wrap(in.index))
-	mux.Handle("GET /inspector/events/{source}/{sequence}", wrap(in.detail))
-	mux.Handle("POST /inspector/events/{source}/{sequence}/replay", wrap(in.replay))
-	mux.Handle("GET /inspector/tokens", wrap(in.tokensList))
-	mux.Handle("POST /inspector/tokens/create", wrap(in.tokensCreate))
-	mux.Handle("POST /inspector/tokens/{id}/revoke", wrap(in.tokensRevoke))
-	mux.Handle("GET /inspector/push", wrap(in.pushList))
-	mux.Handle("POST /inspector/push/create", wrap(in.pushCreate))
-	mux.Handle("POST /inspector/push/{id}/pause", wrap(in.pushPause))
-	mux.Handle("POST /inspector/push/{id}/resume", wrap(in.pushResume))
-	mux.Handle("POST /inspector/push/{id}/test", wrap(in.pushTest))
-	mux.Handle("POST /inspector/push/{id}/rotate", wrap(in.pushRotate))
-	mux.Handle("POST /inspector/push/{id}/delete", wrap(in.pushDelete))
+	mux.Handle("GET /assets/stylesheets/", http.StripPrefix("/assets/stylesheets/", http.FileServer(http.FS(in.staticSub))))
+	mux.Handle("GET /logout", wrap(in.logout))
+	mux.Handle("GET /{$}", wrap(in.index))
+	mux.Handle("GET /events/{source}/{sequence}", wrap(in.detail))
+	mux.Handle("POST /events/{source}/{sequence}/replay", wrap(in.replay))
+	mux.Handle("GET /tokens", wrap(in.tokensList))
+	mux.Handle("POST /tokens/create", wrap(in.tokensCreate))
+	mux.Handle("POST /tokens/{id}/revoke", wrap(in.tokensRevoke))
+	mux.Handle("GET /push", wrap(in.pushList))
+	mux.Handle("POST /push/create", wrap(in.pushCreate))
+	mux.Handle("POST /push/{id}/pause", wrap(in.pushPause))
+	mux.Handle("POST /push/{id}/resume", wrap(in.pushResume))
+	mux.Handle("POST /push/{id}/test", wrap(in.pushTest))
+	mux.Handle("POST /push/{id}/rotate", wrap(in.pushRotate))
+	mux.Handle("POST /push/{id}/delete", wrap(in.pushDelete))
 
-	// /inspector/me is the user self-service page (task 11.4). It is
-	// session-only (the legacy raw-bearer cookie path is admin-scoped and
-	// does not surface a "current user"). Mutations run through the
-	// shared CSRF middleware so the inspector and /api/me/* enforce the
-	// same double-submit + Origin contract.
+	// /me is the user self-service page. Mutations run through the shared
+	// CSRF middleware so the inspector and /api/me/* enforce the same
+	// double-submit + Origin contract.
 	csrf := func(h http.Handler) http.Handler {
 		return web.Middleware(web.CSRFConfig{}, h)
 	}
-	mux.Handle("GET /inspector/me", wrap(in.meIndex))
-	mux.Handle("POST /inspector/me/tokens", wrapH(csrf(http.HandlerFunc(in.meCreateToken))))
-	mux.Handle("POST /inspector/me/tokens/{id}/revoke", wrapH(csrf(http.HandlerFunc(in.meRevokeToken))))
+	mux.Handle("GET /me", wrap(in.meIndex))
+	mux.Handle("POST /me/tokens", wrapH(csrf(http.HandlerFunc(in.meCreateToken))))
+	mux.Handle("POST /me/tokens/{id}/revoke", wrapH(csrf(http.HandlerFunc(in.meRevokeToken))))
 
-	// /inspector/me/push (task 11.7) — user-owned push-subscription view
-	// mirroring /inspector/push without the owner column. Mutations share
-	// the CSRF middleware so the same double-submit + Origin contract
-	// applies as elsewhere on /inspector/me.
-	mux.Handle("GET /inspector/me/push", wrap(in.mePushIndex))
-	mux.Handle("POST /inspector/me/push/{id}/pause", wrapH(csrf(http.HandlerFunc(in.mePushPause))))
-	mux.Handle("POST /inspector/me/push/{id}/resume", wrapH(csrf(http.HandlerFunc(in.mePushResume))))
-	mux.Handle("POST /inspector/me/push/{id}/test", wrapH(csrf(http.HandlerFunc(in.mePushTest))))
-	mux.Handle("POST /inspector/me/push/{id}/rotate", wrapH(csrf(http.HandlerFunc(in.mePushRotate))))
-	mux.Handle("POST /inspector/me/push/{id}/delete", wrapH(csrf(http.HandlerFunc(in.mePushDelete))))
+	// /me/push — user-owned push-subscription view mirroring /push without
+	// the owner column.
+	mux.Handle("GET /me/push", wrap(in.mePushIndex))
+	mux.Handle("POST /me/push/{id}/pause", wrapH(csrf(http.HandlerFunc(in.mePushPause))))
+	mux.Handle("POST /me/push/{id}/resume", wrapH(csrf(http.HandlerFunc(in.mePushResume))))
+	mux.Handle("POST /me/push/{id}/test", wrapH(csrf(http.HandlerFunc(in.mePushTest))))
+	mux.Handle("POST /me/push/{id}/rotate", wrapH(csrf(http.HandlerFunc(in.mePushRotate))))
+	mux.Handle("POST /me/push/{id}/delete", wrapH(csrf(http.HandlerFunc(in.mePushDelete))))
 
-	// /inspector/audit (task 11.6): admin-only HTML view of the audit log.
-	mux.Handle("GET /inspector/audit", wrap(in.auditList))
+	// /audit: admin-only HTML view of the audit log.
+	mux.Handle("GET /audit", wrap(in.auditList))
 
-	// /inspector/users (task 11.5): admin-only user table + invite form
-	// + per-row deactivate/reactivate/reset-password/edit. Mutations run
-	// through the same CSRF middleware as /inspector/me.
-	mux.Handle("GET /inspector/users", wrap(in.usersList))
-	mux.Handle("POST /inspector/users/invite", wrapH(csrf(http.HandlerFunc(in.usersInvite))))
-	mux.Handle("POST /inspector/users/{id}/deactivate", wrapH(csrf(http.HandlerFunc(in.usersDeactivate))))
-	mux.Handle("POST /inspector/users/{id}/reactivate", wrapH(csrf(http.HandlerFunc(in.usersReactivate))))
-	mux.Handle("POST /inspector/users/{id}/reset-password", wrapH(csrf(http.HandlerFunc(in.usersResetPassword))))
-	mux.Handle("POST /inspector/users/{id}/update", wrapH(csrf(http.HandlerFunc(in.usersUpdate))))
+	// /users: admin-only user table + invite form + per-row
+	// deactivate/reactivate/reset-password/edit. Mutations run through
+	// the same CSRF middleware as /me.
+	mux.Handle("GET /users", wrap(in.usersList))
+	mux.Handle("POST /users/invite", wrapH(csrf(http.HandlerFunc(in.usersInvite))))
+	mux.Handle("POST /users/{id}/deactivate", wrapH(csrf(http.HandlerFunc(in.usersDeactivate))))
+	mux.Handle("POST /users/{id}/reactivate", wrapH(csrf(http.HandlerFunc(in.usersReactivate))))
+	mux.Handle("POST /users/{id}/reset-password", wrapH(csrf(http.HandlerFunc(in.usersResetPassword))))
+	mux.Handle("POST /users/{id}/update", wrapH(csrf(http.HandlerFunc(in.usersUpdate))))
 }
 
-// requireAdmin enforces admin access for an inspector request.
-//
-// Authentication sources, in order:
-//  1. hooks_session cookie (task 11.12): if present and the user is admin,
-//     allow. If the user is non-admin, GET redirects to /inspector/me;
-//     non-GET returns 403.
-//  2. legacy hooks_inspector_token cookie (task 11.11): plaintext bearer
-//     token in a cookie; admin scope required.
-//
-// Outcomes when no auth is present:
-//   - GET → 302 to /login?next=<path> (task 11.10).
-//   - non-GET → 401.
-//
-// Lookup failures from a non-auth source (DB unreachable, etc.) → 503 so
-// operators don't mistake an outage for a bad token.
+// requireAdmin enforces admin access via the hooks_session cookie. Admin
+// callers proceed; non-admin GETs redirect to /me; non-admin mutations 403.
+// Anonymous GETs redirect to /login?next=<path>; anonymous mutations 401.
 func (in *Inspector) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
-	// 1. Session cookie path.
 	if in.Sessions != nil {
 		if user, _, ok := in.Sessions.FromContext(r.Context()); ok {
 			if user.Role == store.RoleAdmin {
 				return true
 			}
-			// Logged in as non-admin: GET redirects to /inspector/me;
-			// mutations 403.
 			if r.Method == http.MethodGet {
-				http.Redirect(w, r, "/inspector/me", http.StatusFound)
+				http.Redirect(w, r, "/me", http.StatusFound)
 				return false
 			}
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return false
 		}
 	}
-	// 2. Legacy bearer cookie path.
-	c, err := r.Cookie(cookieName)
-	if err != nil || c.Value == "" {
-		in.denyUnauthorized(w, r)
-		return false
-	}
-	tok, err := in.Auth.ResolvePlaintext(r.Context(), c.Value)
-	if err != nil {
-		if tokens.IsAuthError(err) {
-			clearCookie(w)
-			in.denyUnauthorized(w, r)
-			return false
-		}
-		in.Logger.Error("inspector: auth lookup failed", slog.String("error", err.Error()))
-		http.Error(w, "auth temporarily unavailable", http.StatusServiceUnavailable)
-		return false
-	}
-	if !store.HasScope(tok.Scopes, store.ScopeAdmin) {
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return false
-	}
-	return true
+	in.denyUnauthorized(w, r)
+	return false
 }
 
-// denyUnauthorized handles the no-auth-at-all case. GETs redirect to the
-// new /login page with a ?next= so the user lands back on the inspector
-// after logging in (task 11.10). Mutations get a flat 401.
+// denyUnauthorized redirects anonymous GETs to /login?next=<path> and
+// returns 401 for mutations.
 func (in *Inspector) denyUnauthorized(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		next := r.URL.RequestURI()
@@ -265,55 +211,19 @@ func (in *Inspector) denyUnauthorized(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "unauthorized", http.StatusUnauthorized)
 }
 
-func (in *Inspector) loginGET(w http.ResponseWriter, r *http.Request) {
-	in.render(w, "login", map[string]any{"Error": ""})
-}
-
-// loginPOST is the legacy v1 inspector login form. It still issues the
-// raw-bearer cookie for backwards compatibility with operators who haven't
-// yet migrated to /login (the session-based flow). The Deprecation
-// response header (RFC 8594) marks this path as slated for v2 removal;
-// the cookie format itself continues to authenticate every request,
-// including mutations, until then (task 11.11).
-func (in *Inspector) loginPOST(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	plaintext := strings.TrimSpace(r.Form.Get("token"))
-	tok, err := in.Auth.ResolvePlaintext(r.Context(), plaintext)
-	if err != nil && !tokens.IsAuthError(err) {
-		in.Logger.Error("inspector: login lookup failed", slog.String("error", err.Error()))
-		http.Error(w, "auth temporarily unavailable", http.StatusServiceUnavailable)
-		return
-	}
-	if err != nil || !store.HasScope(tok.Scopes, store.ScopeAdmin) {
-		in.render(w, "login", map[string]any{"Error": "invalid or non-admin token"})
-		return
-	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     cookieName,
-		Value:    plaintext,
-		Path:     "/inspector",
-		HttpOnly: true,
-		Secure:   r.TLS != nil,
-		SameSite: http.SameSiteLaxMode,
-		Expires:  time.Now().Add(7 * 24 * time.Hour),
-	})
-	w.Header().Set("Deprecation", "true")
-	w.Header().Set("Link", `</login>; rel="successor-version"`)
-	in.Logger.Warn("inspector: legacy /inspector/login used; migrate to /login (deprecated for v2)",
-		slog.String("token_id", tok.ID))
-	http.Redirect(w, r, "/inspector", http.StatusFound)
-}
-
+// logout invalidates the session row and clears the browser cookies, then
+// redirects to /login. Idempotent — visiting /logout while already
+// anonymous still 302s to /login.
 func (in *Inspector) logout(w http.ResponseWriter, r *http.Request) {
-	clearCookie(w)
-	http.Redirect(w, r, "/inspector/login", http.StatusFound)
-}
-
-func clearCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: "/inspector", MaxAge: -1})
+	if in.Sessions != nil {
+		if c, err := r.Cookie(auth.SessionCookie); err == nil && c.Value != "" {
+			if _, delErr := in.Sessions.DeleteSession(r.Context(), c.Value); delErr != nil && !errors.Is(delErr, auth.ErrInvalid) {
+				in.Logger.Warn("inspector: logout delete session failed", slog.Any("err", delErr))
+			}
+		}
+		in.Sessions.ClearCookies(w, r)
+	}
+	http.Redirect(w, r, "/login", http.StatusFound)
 }
 
 // index renders the recent-events list.
@@ -502,7 +412,7 @@ func (in *Inspector) replay(w http.ResponseWriter, r *http.Request) {
 	in.Notifier.Publish(source, seq)
 	// Push subscribers get a one-shot replay (no cursor advance).
 	in.Push.ReplayOne(r.Context(), ev)
-	http.Redirect(w, r, fmt.Sprintf("/inspector/events/%s/%d", source, seq), http.StatusSeeOther)
+	http.Redirect(w, r, fmt.Sprintf("/events/%s/%d", source, seq), http.StatusSeeOther)
 }
 
 func (in *Inspector) tokensList(w http.ResponseWriter, r *http.Request) {
@@ -659,7 +569,7 @@ func (in *Inspector) tokensRevoke(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/inspector/tokens", http.StatusSeeOther)
+	http.Redirect(w, r, "/tokens", http.StatusSeeOther)
 }
 
 func (in *Inspector) pushList(w http.ResponseWriter, r *http.Request) {
@@ -711,7 +621,7 @@ func (in *Inspector) fetchPushSubs(ctx context.Context, owner string) ([]store.P
 	}
 }
 
-// ownerOption is one entry in the /inspector/push owner-filter dropdown.
+// ownerOption is one entry in the /push owner-filter dropdown.
 type ownerOption struct {
 	Value string // "" / "system" / user_id
 	Label string // "all" / "system" / email-or-id
@@ -851,7 +761,7 @@ func (in *Inspector) pushPause(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.Push.Pause(id)
-	http.Redirect(w, r, "/inspector/push", http.StatusSeeOther)
+	http.Redirect(w, r, "/push", http.StatusSeeOther)
 }
 
 func (in *Inspector) pushResume(w http.ResponseWriter, r *http.Request) {
@@ -864,7 +774,7 @@ func (in *Inspector) pushResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = in.Push.Resume(r.Context(), id)
-	http.Redirect(w, r, "/inspector/push", http.StatusSeeOther)
+	http.Redirect(w, r, "/push", http.StatusSeeOther)
 }
 
 func (in *Inspector) pushTest(w http.ResponseWriter, r *http.Request) {
@@ -876,7 +786,7 @@ func (in *Inspector) pushTest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	http.Redirect(w, r, "/inspector/push", http.StatusSeeOther)
+	http.Redirect(w, r, "/push", http.StatusSeeOther)
 }
 
 func (in *Inspector) pushRotate(w http.ResponseWriter, r *http.Request) {
@@ -929,7 +839,7 @@ func (in *Inspector) pushDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.Push.Remove(id)
-	http.Redirect(w, r, "/inspector/push", http.StatusSeeOther)
+	http.Redirect(w, r, "/push", http.StatusSeeOther)
 }
 
 func (in *Inspector) render(w http.ResponseWriter, name string, data any) {

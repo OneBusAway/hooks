@@ -73,7 +73,7 @@ sources:
 `--dev` enables verbose logging, opens the inspector in your browser, and prints the URLs you'll need:
 
 ```
-inspector: http://localhost:8080/inspector
+inspector: http://localhost:8080/
 ingest:    http://localhost:8080/ingest/render
 forward:   hooksctl forward render --to http://localhost:3000/webhooks/render
 ```
@@ -111,7 +111,7 @@ The fastest trigger is a redeploy of any Render service: `Manual Deploy → Depl
 You should see, in order:
 
 - A `POST /ingest/render` log line in the `hooks --dev` terminal.
-- A new row in the inspector at `http://localhost:8080/inspector` (paste the admin token to log in).
+- A new row in the inspector at `http://localhost:8080/` (sign in with the admin email/password you set during `hooks init`).
 - A `POST /webhooks/render` arriving at your local app via the `hooksctl forward` terminal.
 
 ### 8. (Optional) Register a long-lived push subscription

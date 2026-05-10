@@ -1,16 +1,12 @@
 package inspector
 
-// /inspector/me/push (task 11.7) — user-owned push-subscription view that
-// mirrors /inspector/push but without the owner column.
-//
-// Authentication is session-only (same contract as /inspector/me): the
-// legacy hooks_inspector_token raw-bearer cookie has no associated user
-// row, so anonymous and bearer-only callers redirect to /login.
+// /me/push — user-owned push-subscription view that mirrors /push but
+// without the owner column. Anonymous callers redirect to /login.
 //
 // Mutations (pause / resume / rotate / delete / test) run through the
 // shared CSRF middleware mounted in Register and operate strictly on rows
-// whose owner_user_id matches the calling user; cross-user attempts return
-// 404 (probe-resistant) without disturbing the row.
+// whose owner_user_id matches the calling user; cross-user attempts
+// return 404 (probe-resistant) without disturbing the row.
 
 import (
 	"errors"
@@ -45,7 +41,7 @@ func (in *Inspector) requireOwnedSub(w http.ResponseWriter, r *http.Request, use
 	return sub, true
 }
 
-// mePushIndex renders /inspector/me/push for the calling user.
+// mePushIndex renders /me/push for the calling user.
 func (in *Inspector) mePushIndex(w http.ResponseWriter, r *http.Request) {
 	user, ok := in.requireSessionUser(w, r)
 	if !ok {
@@ -96,7 +92,7 @@ func (in *Inspector) mePushPause(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.Push.Pause(id)
-	http.Redirect(w, r, "/inspector/me/push", http.StatusSeeOther)
+	http.Redirect(w, r, "/me/push", http.StatusSeeOther)
 }
 
 // mePushResume resumes a subscription owned by the caller.
@@ -114,7 +110,7 @@ func (in *Inspector) mePushResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = in.Push.Resume(r.Context(), id)
-	http.Redirect(w, r, "/inspector/me/push", http.StatusSeeOther)
+	http.Redirect(w, r, "/me/push", http.StatusSeeOther)
 }
 
 // mePushTest sends a synthetic ping event to the subscription's target URL
@@ -133,11 +129,11 @@ func (in *Inspector) mePushTest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	http.Redirect(w, r, "/inspector/me/push", http.StatusSeeOther)
+	http.Redirect(w, r, "/me/push", http.StatusSeeOther)
 }
 
 // mePushRotate rotates the signing secret. The new plaintext is rendered
-// exactly once on the resulting page (matches /inspector/push behavior).
+// exactly once on the resulting page (matches /push behavior).
 func (in *Inspector) mePushRotate(w http.ResponseWriter, r *http.Request) {
 	user, ok := in.requireSessionUser(w, r)
 	if !ok {
@@ -180,5 +176,5 @@ func (in *Inspector) mePushDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.Push.Remove(id)
-	http.Redirect(w, r, "/inspector/me/push", http.StatusSeeOther)
+	http.Redirect(w, r, "/me/push", http.StatusSeeOther)
 }

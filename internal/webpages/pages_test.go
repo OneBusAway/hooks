@@ -165,8 +165,8 @@ func TestLoginPOST_HappyPath_RedirectsAndSetsSessionCookie(t *testing.T) {
 		t.Fatalf("status: %d", resp.StatusCode)
 	}
 	loc := resp.Header.Get("Location")
-	if loc != "/inspector" {
-		t.Errorf("redirect: %q want /inspector", loc)
+	if loc != "/" {
+		t.Errorf("redirect: %q want /", loc)
 	}
 	if cookieValue(resp, auth.SessionCookie) == "" {
 		t.Error("hooks_session cookie not set after login")
@@ -176,7 +176,7 @@ func TestLoginPOST_HappyPath_RedirectsAndSetsSessionCookie(t *testing.T) {
 	}
 }
 
-// TestLoginPOST_RotatesPostSessionCSRFCookieAcrossLogins asserts task 4.3:
+// TestLoginPOST_RotatesPostSessionCSRFCookieAcrossLogins asserts that
 // the post-session hooks_csrf cookie value is regenerated on every
 // successful login. Two logins from the same client (cookie jar carries
 // any prior hooks_csrf forward) must produce two distinct cookie values
@@ -315,8 +315,8 @@ func TestLoginPOST_RejectsForeignNextRedirect(t *testing.T) {
 			form.Set("password", "supercalifragilistic")
 			form.Set("csrf_token", csrf)
 			resp, _ := f.postForm(t, "/login?next="+url.QueryEscape(evil), form)
-			if loc := resp.Header.Get("Location"); loc != "/inspector" {
-				t.Errorf("evil next %q produced redirect %q want /inspector", evil, loc)
+			if loc := resp.Header.Get("Location"); loc != "/" {
+				t.Errorf("evil next %q produced redirect %q want /", evil, loc)
 			}
 		})
 	}
@@ -452,8 +452,8 @@ func TestSignupPOST_MissingCSRFToken_Rejected(t *testing.T) {
 func TestSafeNext(t *testing.T) {
 	cases := map[string]string{
 		"":                                "",
-		"/inspector":                      "/inspector",
-		"/inspector/me":                   "/inspector/me",
+		"/":                               "/",
+		"/me":                             "/me",
 		"//evil.example.com":              "",
 		"https://evil.example.com/foo":    "",
 		"http://evil.example.com/foo":     "",

@@ -111,7 +111,7 @@ func TestServerInspectorRouted(t *testing.T) {
 	t.Cleanup(ts.Close)
 
 	cli := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	resp, err := cli.Get(ts.URL + "/inspector")
+	resp, err := cli.Get(ts.URL + "/")
 	if err != nil {
 		t.Fatal(err)
 	}

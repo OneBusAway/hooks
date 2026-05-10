@@ -1,6 +1,6 @@
 package inspector
 
-// Tests for /inspector/users (task 11.5): admin-only user table, invite
+// Tests for /users: admin-only user table, invite
 // form, per-row deactivate (with email-confirmation form field; refuses
 // last-admin), reactivate, reset-password, edit-default-scopes — all
 // CSRF-protected.
@@ -47,7 +47,7 @@ func getInspector(t *testing.T, f *sessionFixture) *Inspector {
 }
 
 // testHashPassword is a deterministic stand-in for the production
-// pkgUsers.HashPassword. The /inspector/users tests only need a value to
+// pkgUsers.HashPassword. The /users tests only need a value to
 // land in the password_hash column; cryptographic strength is exercised
 // elsewhere.
 func testHashPassword(plaintext string) (string, error) {
@@ -75,7 +75,7 @@ func (e *policyErr) Error() string { return "password policy: " + e.Reason }
 // users list redirects to /login?next=... .
 func TestInspectorUsers_AnonymousRedirectsToLogin(t *testing.T) {
 	f := loadInspectorUsersFixture(t)
-	resp := f.get(t, "/inspector/users")
+	resp := f.get(t, "/users")
 	if resp.StatusCode != http.StatusFound {
 		t.Fatalf("status: %d, want 302", resp.StatusCode)
 	}
@@ -86,18 +86,18 @@ func TestInspectorUsers_AnonymousRedirectsToLogin(t *testing.T) {
 }
 
 // TestInspectorUsers_NonAdminGets403: a logged-in non-admin user is
-// redirected to /inspector/me on GET (existing requireAdmin behavior).
+// redirected to /me on GET (existing requireAdmin behavior).
 func TestInspectorUsers_NonAdminRedirectsToMe(t *testing.T) {
 	f := loadInspectorUsersFixture(t)
 	u := f.makeUser(t, "user@example.com", store.RoleUser)
 	f.loginAs(t, u)
 
-	resp := f.get(t, "/inspector/users")
+	resp := f.get(t, "/users")
 	if resp.StatusCode != http.StatusFound {
 		t.Fatalf("status: %d, want 302", resp.StatusCode)
 	}
-	if loc := resp.Header.Get("Location"); loc != "/inspector/me" {
-		t.Fatalf("Location = %q, want /inspector/me", loc)
+	if loc := resp.Header.Get("Location"); loc != "/me" {
+		t.Fatalf("Location = %q, want /me", loc)
 	}
 }
 
@@ -109,7 +109,7 @@ func TestInspectorUsers_AdminSeesUserTable(t *testing.T) {
 	other := f.makeUser(t, "other@example.com", store.RoleUser)
 	f.loginAs(t, admin)
 
-	req, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/inspector/users", nil)
+	req, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/users", nil)
 	resp, err := f.client.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -132,7 +132,7 @@ func TestInspectorUsers_AdminSeesUserTable(t *testing.T) {
 	}
 }
 
-// TestInspectorUsers_InviteCreatesRowAndShowsURL: POST /inspector/users/invite
+// TestInspectorUsers_InviteCreatesRowAndShowsURL: POST /users/invite
 // with role=user creates an invite row and the response shows the signup URL
 // once.
 func TestInspectorUsers_InviteCreatesRowAndShowsURL(t *testing.T) {
@@ -147,7 +147,7 @@ func TestInspectorUsers_InviteCreatesRowAndShowsURL(t *testing.T) {
 		"scopes":     {"render"},
 		"csrf_token": {csrf},
 	}
-	req, _ := http.NewRequest(http.MethodPost, f.srv.URL+"/inspector/users/invite",
+	req, _ := http.NewRequest(http.MethodPost, f.srv.URL+"/users/invite",
 		strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", f.srv.URL)
@@ -189,7 +189,7 @@ func TestInspectorUsers_InviteRequiresCSRF(t *testing.T) {
 	f.primeCSRF(t, "the-real")
 
 	form := url.Values{"role": {"user"}}
-	req, _ := http.NewRequest(http.MethodPost, f.srv.URL+"/inspector/users/invite",
+	req, _ := http.NewRequest(http.MethodPost, f.srv.URL+"/users/invite",
 		strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", f.srv.URL)
@@ -219,7 +219,7 @@ func TestInspectorUsers_DeactivateRequiresEmailConfirm(t *testing.T) {
 		"csrf_token": {csrf},
 	}
 	req, _ := http.NewRequest(http.MethodPost,
-		f.srv.URL+"/inspector/users/"+target.ID+"/deactivate",
+		f.srv.URL+"/users/"+target.ID+"/deactivate",
 		strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", f.srv.URL)
@@ -257,7 +257,7 @@ func TestInspectorUsers_DeactivateSuccess(t *testing.T) {
 		"csrf_token": {csrf},
 	}
 	req, _ := http.NewRequest(http.MethodPost,
-		f.srv.URL+"/inspector/users/"+target.ID+"/deactivate",
+		f.srv.URL+"/users/"+target.ID+"/deactivate",
 		strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", f.srv.URL)
@@ -293,7 +293,7 @@ func TestInspectorUsers_DeactivateRefusesLastAdmin(t *testing.T) {
 		"csrf_token": {csrf},
 	}
 	req, _ := http.NewRequest(http.MethodPost,
-		f.srv.URL+"/inspector/users/"+admin.ID+"/deactivate",
+		f.srv.URL+"/users/"+admin.ID+"/deactivate",
 		strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", f.srv.URL)
@@ -329,7 +329,7 @@ func TestInspectorUsers_Reactivate(t *testing.T) {
 
 	form := url.Values{"csrf_token": {csrf}}
 	req, _ := http.NewRequest(http.MethodPost,
-		f.srv.URL+"/inspector/users/"+target.ID+"/reactivate",
+		f.srv.URL+"/users/"+target.ID+"/reactivate",
 		strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", f.srv.URL)
@@ -371,7 +371,7 @@ func TestInspectorUsers_ResetPasswordChangesHash(t *testing.T) {
 		"csrf_token":   {csrf},
 	}
 	req, _ := http.NewRequest(http.MethodPost,
-		f.srv.URL+"/inspector/users/"+target.ID+"/reset-password",
+		f.srv.URL+"/users/"+target.ID+"/reset-password",
 		strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", f.srv.URL)
@@ -408,7 +408,7 @@ func TestInspectorUsers_ResetPasswordRejectsShort(t *testing.T) {
 		"csrf_token":   {csrf},
 	}
 	req, _ := http.NewRequest(http.MethodPost,
-		f.srv.URL+"/inspector/users/"+target.ID+"/reset-password",
+		f.srv.URL+"/users/"+target.ID+"/reset-password",
 		strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", f.srv.URL)
@@ -438,7 +438,7 @@ func TestInspectorUsers_UpdateScopes(t *testing.T) {
 		"csrf_token":     {csrf},
 	}
 	req, _ := http.NewRequest(http.MethodPost,
-		f.srv.URL+"/inspector/users/"+target.ID+"/update",
+		f.srv.URL+"/users/"+target.ID+"/update",
 		strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", f.srv.URL)
