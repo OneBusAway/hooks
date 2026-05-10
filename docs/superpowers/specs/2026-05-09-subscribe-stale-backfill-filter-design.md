@@ -1,6 +1,6 @@
 # Skip stale events on `/subscribe` initial backfill
 
-**Status:** approved, pending implementation
+**Status:** approved, implemented in PR #8
 **Date:** 2026-05-09
 **Affects:** `internal/subscribe`, `internal/server` (handler wiring)
 
@@ -12,7 +12,7 @@ Standard Webhooks consumers reject messages whose `webhook-timestamp` is older t
 
 The conflict is structural. The relay durably stores webhooks; consumers verify timestamps strictly. As soon as automatic replay crosses the consumer's tolerance, every redelivery 401s. The Rails app behind `hooksctl forward` is exhibiting exactly this:
 
-```
+```text
 Render webhook: signature verification failed: Message timestamp too old
 Filter chain halted as :verify_render_signature rendered or redirected
 Completed 401 Unauthorized
