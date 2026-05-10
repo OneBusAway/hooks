@@ -262,26 +262,92 @@ sources:
 	fmt.Printf("  db:     %s\n", dbPath)
 	fmt.Printf("  admin token (shown ONCE): %s\n", res.Plaintext)
 	if bootstrapCode != "" {
-		base := *serverURL
-		if base == "" {
-			base = "http://localhost:8080  # set --server-url or HOOKS_PUBLIC_URL"
+		base, placeholder := signupBase(*serverURL)
+		fmt.Printf("  signup: %s/signup?code=%s\n", base, bootstrapCode)
+		if placeholder {
+			fmt.Println("          (set HOOKS_PUBLIC_URL or --server-url to print the real URL)")
 		}
-		fmt.Printf("  signup: %s/signup?code=%s\n", strings.TrimRight(base, "/"), bootstrapCode)
 		if bootstrapTTL != "" {
 			fmt.Printf("          (single-use; expires in %s; auto-disables once any account exists)\n", bootstrapTTL)
 		}
 	}
+	printInitNextSteps(strings.TrimRight(*serverURL, "/"), res.Plaintext, bootstrapCode != "")
+	return 0
+}
+
+// printInitNextSteps writes the post-init guidance to stdout. The same `hooks
+// init` is invoked from a developer laptop AND from docker-entrypoint.sh on a
+// fresh Render volume — those two contexts need different instructions:
+//
+//   - On Render the server is about to start automatically; "hooks --dev" is
+//     wrong, RENDER_WEBHOOK_SECRET goes in the service Environment tab (not a
+//     local shell), and the public URL is known via HOOKS_PUBLIC_URL.
+//   - Locally the operator still needs to start the server, and the public
+//     URL is usually unknown until they pick a hostname / proxy.
+//
+// We detect the Render case via the `RENDER=true` env var that the platform
+// injects into every service container, and fall back to the generic guidance
+// otherwise.
+func printInitNextSteps(publicURL, adminToken string, hasBootstrapInvite bool) {
+	host := publicURL
+	if host == "" {
+		host = "https://<your-public-url>"
+	}
+	onRender := os.Getenv("RENDER") == "true"
+
 	fmt.Println()
 	fmt.Println("Next steps:")
-	fmt.Println("  1. Set RENDER_WEBHOOK_SECRET in your environment.")
-	fmt.Println("  2. Start the server: hooks --dev")
-	fmt.Println("  3. Register a Render webhook pointing at https://<your-host>/ingest/render")
-	fmt.Println("  4. From a dev laptop:")
-	fmt.Printf("     export HOOKS_TOKEN=%s\n", res.Plaintext)
-	fmt.Println("     hooksctl forward render --to http://localhost:3000/webhooks/render")
-	fmt.Println("  5. Or register a long-lived consumer:")
-	fmt.Println("     hooksctl push add --source render --to https://my-svc.example.com/hooks")
-	return 0
+
+	// Step 1: provider secret. Wording differs by platform because the
+	// "environment" the operator has to edit is in different places.
+	if onRender {
+		fmt.Println("  1. In the Render dashboard → your service → Environment, set")
+		fmt.Println("     RENDER_WEBHOOK_SECRET to the signing secret from the Render")
+		fmt.Println("     webhook you'll register in step 3. Saving triggers a redeploy;")
+		fmt.Println("     this admin token and signup URL persist across the redeploy.")
+	} else {
+		fmt.Println("  1. Export the per-webhook signing secret in the shell that will")
+		fmt.Println("     run hooks (or set it in your process supervisor / .env file):")
+		fmt.Println("       export RENDER_WEBHOOK_SECRET=<secret-from-render>")
+	}
+
+	// Step 2: claim the admin account. Skip when there's no bootstrap
+	// invite (re-run of `hooks init --force` against a populated DB).
+	stepNum := 2
+	if hasBootstrapInvite {
+		fmt.Printf("  %d. Open the signup URL above in a browser to claim your admin\n", stepNum)
+		fmt.Println("     account. The one-time admin token shown above also works as a")
+		fmt.Println("     bearer credential for hooksctl, but a real account is what")
+		fmt.Println("     enables the inspector and per-user PATs.")
+		stepNum++
+	}
+
+	// Step 3 (or 2): start the server, only outside of Render.
+	if !onRender {
+		fmt.Printf("  %d. Start the server:  hooks   (or `hooks --dev` for the inspector)\n", stepNum)
+		stepNum++
+	}
+
+	// Step: register the provider webhook.
+	fmt.Printf("  %d. Register a Render webhook pointing at:\n", stepNum)
+	fmt.Printf("       %s/ingest/render\n", host)
+	fmt.Println("     Use the same secret you set in step 1.")
+	stepNum++
+
+	// Step: connect a developer laptop.
+	fmt.Printf("  %d. From a dev laptop, pair with the relay:\n", stepNum)
+	fmt.Printf("       hooksctl login --server %s --scopes render\n", host)
+	fmt.Println("       hooksctl forward render --to http://localhost:3000/webhooks/render")
+	if !hasBootstrapInvite {
+		// No signup URL was printed — surface the legacy admin-token path
+		// so the operator still has a way in.
+		fmt.Printf("     (Or skip `login` and use the legacy admin token: HOOKS_TOKEN=%s)\n", adminToken)
+	}
+	stepNum++
+
+	// Step: long-lived consumer.
+	fmt.Printf("  %d. Or register a long-lived consumer:\n", stepNum)
+	fmt.Println("       hooksctl me sub add --source render --to https://my-svc.example.com/hooks")
 }
 
 // --- subcommand: invite -----------------------------------------------------
@@ -346,13 +412,27 @@ func runInvite(args []string) int {
 		return 1
 	}
 
-	base := *serverURL
-	if base == "" {
-		base = "http://localhost:8080  # set --server-url or HOOKS_PUBLIC_URL"
+	base, placeholder := signupBase(*serverURL)
+	fmt.Printf("signup: %s/signup?code=%s\n", base, code)
+	if placeholder {
+		fmt.Println("        (set HOOKS_PUBLIC_URL or --server-url to print the real URL)")
 	}
-	fmt.Printf("signup: %s/signup?code=%s\n", strings.TrimRight(base, "/"), code)
 	fmt.Printf("        (role: %s, single-use, expires in %s)\n", *role, ttl.Round(time.Hour))
 	return 0
+}
+
+// signupBase returns the URL prefix to use when printing a signup link. If
+// `serverURL` is empty (no --server-url flag and no HOOKS_PUBLIC_URL env var),
+// it returns a `localhost:8080` placeholder and `placeholder=true` so the
+// caller can print a follow-up note rather than concatenating the explanatory
+// comment into the URL itself (which previously produced output like
+// `http://localhost:8080  # set HOOKS_PUBLIC_URL/signup?code=…`).
+func signupBase(serverURL string) (base string, placeholder bool) {
+	trimmed := strings.TrimRight(serverURL, "/")
+	if trimmed == "" {
+		return "http://localhost:8080", true
+	}
+	return trimmed, false
 }
 
 // --- subcommand: prune ------------------------------------------------------
