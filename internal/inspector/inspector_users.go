@@ -25,6 +25,8 @@ import (
 	"github.com/onebusaway/hooks/internal/store"
 )
 
+const usersPath = "/users"
+
 // userRow is one row in the /users table.
 type userRow struct {
 	ID            string
@@ -230,7 +232,7 @@ func (in *Inspector) usersDeactivate(w http.ResponseWriter, r *http.Request) {
 		"tokens_revoked":       res.TokensRevoked,
 		"subscriptions_paused": res.SubscriptionsPaused,
 	})
-	http.Redirect(w, r, "/users", http.StatusSeeOther)
+	http.Redirect(w, r, usersPath, http.StatusSeeOther)
 }
 
 // usersReactivate clears deactivated_at on the target user. Tokens and
@@ -250,7 +252,7 @@ func (in *Inspector) usersReactivate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.recordUsersAudit(r, audit.ActionUserReactivate, audit.TargetTypeUser, id, nil)
-	http.Redirect(w, r, "/users", http.StatusSeeOther)
+	http.Redirect(w, r, usersPath, http.StatusSeeOther)
 }
 
 // usersResetPassword sets a new password hash for the target user and
@@ -311,7 +313,7 @@ func (in *Inspector) usersResetPassword(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	in.recordUsersAudit(r, audit.ActionUserPasswordReset, audit.TargetTypeUser, id, nil)
-	http.Redirect(w, r, "/users", http.StatusSeeOther)
+	http.Redirect(w, r, usersPath, http.StatusSeeOther)
 }
 
 // usersUpdate edits the target's name and/or default_scopes. The form
@@ -356,7 +358,7 @@ func (in *Inspector) usersUpdate(w http.ResponseWriter, r *http.Request) {
 		"name":           name,
 		"default_scopes": scopes,
 	})
-	http.Redirect(w, r, "/users", http.StatusSeeOther)
+	http.Redirect(w, r, usersPath, http.StatusSeeOther)
 }
 
 // parseScopesField splits "render,stripe ,  foo" into ["render","stripe","foo"].
