@@ -73,6 +73,7 @@ func Build(cfg *config.Config, registry *sources.Registry, logger *slog.Logger) 
 	bindings := map[string]ingest.SourceBinding{}
 	configuredSources := make([]string, 0, len(cfg.Sources))
 	configuredSourceSet := map[string]bool{}
+	subscribeSkews := make(map[string]time.Duration, len(cfg.Sources))
 	retentions := map[string]time.Duration{}
 	for name, src := range cfg.Sources {
 		v, ok := registry.Build(src.Verifier, src.Secret.Reveal(), sources.Options{
@@ -89,6 +90,13 @@ func Build(cfg *config.Config, registry *sources.Registry, logger *slog.Logger) 
 		}
 		configuredSources = append(configuredSources, name)
 		configuredSourceSet[name] = true
+		// Resolve effective skew at the seam: zero/unset becomes the verifier
+		// default. The SSE handler relies on a non-zero value here.
+		effectiveSkew := src.SkewWindow
+		if effectiveSkew == 0 {
+			effectiveSkew = sources.DefaultSkewWindow
+		}
+		subscribeSkews[name] = effectiveSkew
 		retentions[name] = src.Retention
 	}
 
@@ -154,7 +162,7 @@ func Build(cfg *config.Config, registry *sources.Registry, logger *slog.Logger) 
 	ingestHandler.Register(mux, "/ingest/")
 
 	// Subscribe (SSE).
-	sseHandler := subscribe.New(st, notifier, bearerAuth, configuredSources, logger)
+	sseHandler := subscribe.New(st, notifier, bearerAuth, subscribeSkews, logger)
 	mux.Handle("GET /subscribe/{source}", sseHandler)
 
 	// Token API (admin).

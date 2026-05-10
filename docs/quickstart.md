@@ -135,7 +135,7 @@ hooksctl whoami
 hooksctl forward render --to http://localhost:3000/webhooks/render
 ```
 
-Against a logged-in profile, `forward` auto-mints an ephemeral `kind='listener'` token, replays anything missed since the last cursor, then tails live. The token is revoked on clean exit; the server's prune loop reaps any ephemeral token whose `last_used_at` falls 24h behind. Bytes hitting your local app are byte-for-byte identical to what Render sent. Original headers (other than hop-by-hop) are preserved.
+Against a logged-in profile, `forward` auto-mints an ephemeral `kind='listener'` token, replays anything missed since the last cursor, then tails live. Initial catch-up is bounded by the source's signature-verification skew window (5 minutes for Render by default): events older than that are skipped on the initial drain so your verifying consumer doesn't 401 on a stale `webhook-timestamp`. The cursor still advances past skipped events, so reconnects don't reconsider them; the events remain in the store and can be redelivered via the inspector or `hooksctl replay`. The token is revoked on clean exit; the server's prune loop reaps any ephemeral token whose `last_used_at` falls 24h behind. Bytes hitting your local app are byte-for-byte identical to what Render sent. Original headers (other than hop-by-hop) are preserved.
 
 For a long-lived listener (skip the mint/revoke dance every run), see [`docs/accounts.md`](accounts.md#power-user-long-lived-listener-token).
 

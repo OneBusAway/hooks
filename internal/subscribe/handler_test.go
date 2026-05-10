@@ -2,6 +2,7 @@ package subscribe
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -43,17 +44,26 @@ func setup(t *testing.T) (*Handler, *store.SQLite, *pubsub.Notifier, string, str
 	}
 
 	notifier := pubsub.New()
-	h := New(st, notifier, tokens.New(st.Tokens()), []string{"render"}, slog.New(slog.DiscardHandler))
+	h := New(st, notifier, tokens.New(st.Tokens()), map[string]time.Duration{"render": 5 * time.Minute}, slog.New(slog.DiscardHandler))
 	h.Keepalive = 50 * time.Millisecond
 	return h, st, notifier, res.Plaintext, adminRes.Plaintext
 }
 
 func appendEvent(t *testing.T, st *store.SQLite, source, deliveryID string, body []byte) store.Event {
 	t.Helper()
+	return appendEventAt(t, st, source, deliveryID, time.Now(), body)
+}
+
+// appendEventAt seeds an event with a caller-controlled ProviderTimestamp.
+// The store still stamps ReceivedAt with time.Now(); the SSE stale filter
+// reads ProviderTimestamp, which is what the consumer's signature-verifier
+// will check.
+func appendEventAt(t *testing.T, st *store.SQLite, source, deliveryID string, providerTime time.Time, body []byte) store.Event {
+	t.Helper()
 	ev, err := st.Append(context.Background(), store.AppendInput{
 		Source:            source,
 		DeliveryID:        deliveryID,
-		ProviderTimestamp: time.Now(),
+		ProviderTimestamp: providerTime,
 		Headers:           map[string]string{"X-Test": "1"},
 		Body:              body,
 	})
@@ -379,6 +389,322 @@ func TestConcurrentSubscribers(t *testing.T) {
 func TestUnknownSourceIs404(t *testing.T) {
 	h, _, _, tok, _ := setup(t)
 	srv := startServer(t, h)
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/subscribe/stripe", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+}
+
+// readWithDeadline pulls the next SSE message off the stream or returns
+// ok=false on timeout. Used for assertions that nothing arrived.
+func readWithDeadline(stream <-chan sseMessage, d time.Duration) (sseMessage, bool) {
+	select {
+	case msg, ok := <-stream:
+		if !ok {
+			return sseMessage{}, false
+		}
+		return msg, true
+	case <-time.After(d):
+		return sseMessage{}, false
+	}
+}
+
+// connect opens a SSE subscription using tok and returns the response and
+// the parsed message channel. Caller is responsible for cancel + Close.
+func connect(t *testing.T, srv *httptest.Server, tok, path string) (*http.Response, <-chan sseMessage, context.CancelFunc) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+path, nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		cancel()
+		_ = resp.Body.Close()
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	stream := readSSE(t, resp.Body)
+	return resp, stream, cancel
+}
+
+// fixedNow returns a clock function that always returns t. Used to make the
+// initial-backfill stale filter deterministic in tests.
+func fixedNow(t time.Time) func() time.Time { return func() time.Time { return t } }
+
+func TestInitialBackfillSkipsStaleEvent(t *testing.T) {
+	h, st, _, tok, _ := setup(t)
+	now := time.Date(2026, 5, 9, 12, 0, 0, 0, time.UTC)
+	h.Now = fixedNow(now)
+	srv := startServer(t, h)
+
+	appendEventAt(t, st, "render", "stale-1", now.Add(-10*time.Minute), []byte("body"))
+
+	resp, stream, cancel := connect(t, srv, tok, "/subscribe/render?since=0")
+	defer cancel()
+	defer resp.Body.Close()
+
+	if msg, ok := readWithDeadline(stream, 750*time.Millisecond); ok && msg.ID != "" {
+		t.Fatalf("expected no SSE message; got id=%q event=%q", msg.ID, msg.Event)
+	}
+}
+
+func TestInitialBackfillDeliversFreshEvent(t *testing.T) {
+	h, st, _, tok, _ := setup(t)
+	now := time.Date(2026, 5, 9, 12, 0, 0, 0, time.UTC)
+	h.Now = fixedNow(now)
+	srv := startServer(t, h)
+
+	appendEventAt(t, st, "render", "fresh-1", now.Add(-1*time.Minute), []byte("body"))
+
+	resp, stream, cancel := connect(t, srv, tok, "/subscribe/render?since=0")
+	defer cancel()
+	defer resp.Body.Close()
+
+	msg, ok := readWithDeadline(stream, 2*time.Second)
+	if !ok {
+		t.Fatal("never received fresh event")
+	}
+	if msg.ID != "1" {
+		t.Fatalf("got id %q, want 1", msg.ID)
+	}
+}
+
+func TestInitialBackfillMixedBatchOnlyFreshEmittedAndIdempotentOnReconnect(t *testing.T) {
+	h, st, _, tok, _ := setup(t)
+	now := time.Date(2026, 5, 9, 12, 0, 0, 0, time.UTC)
+	h.Now = fixedNow(now)
+	srv := startServer(t, h)
+
+	stale := now.Add(-10 * time.Minute)
+	fresh := now.Add(-1 * time.Minute)
+	appendEventAt(t, st, "render", "stale-a", stale, []byte("a")) // seq 1
+	appendEventAt(t, st, "render", "fresh-b", fresh, []byte("b")) // seq 2
+	appendEventAt(t, st, "render", "stale-c", stale, []byte("c")) // seq 3
+	appendEventAt(t, st, "render", "fresh-d", fresh, []byte("d")) // seq 4
+
+	collect := func() []string {
+		resp, stream, cancel := connect(t, srv, tok, "/subscribe/render?since=0")
+		defer cancel()
+		defer resp.Body.Close()
+		var ids []string
+		// Read until the stream goes idle (no more events). The window
+		// must be long enough to survive -race slowdowns on CI runners.
+		for {
+			msg, ok := readWithDeadline(stream, 750*time.Millisecond)
+			if !ok {
+				return ids
+			}
+			ids = append(ids, msg.ID)
+		}
+	}
+
+	first := collect()
+	if len(first) != 2 || first[0] != "2" || first[1] != "4" {
+		t.Fatalf("first connect: got ids %v, want [2 4]", first)
+	}
+	second := collect()
+	if len(second) != 2 || second[0] != "2" || second[1] != "4" {
+		t.Fatalf("reconnect: got ids %v, want [2 4]", second)
+	}
+}
+
+func TestInitialBackfillAllStaleStillAdvancesCursor(t *testing.T) {
+	h, st, notifier, tok, _ := setup(t)
+	now := time.Date(2026, 5, 9, 12, 0, 0, 0, time.UTC)
+	h.Now = fixedNow(now)
+	srv := startServer(t, h)
+
+	stale := now.Add(-10 * time.Minute)
+	appendEventAt(t, st, "render", "stale-1", stale, []byte("a")) // seq 1
+	appendEventAt(t, st, "render", "stale-2", stale, []byte("b")) // seq 2
+
+	resp, stream, cancel := connect(t, srv, tok, "/subscribe/render?since=0")
+	defer cancel()
+	defer resp.Body.Close()
+
+	// Drain the initial backfill: we expect zero messages within a short window.
+	if msg, ok := readWithDeadline(stream, 750*time.Millisecond); ok && msg.ID != "" {
+		t.Fatalf("initial drain emitted unexpected msg id=%q", msg.ID)
+	}
+
+	// Now ingest a fresh event live and notify.
+	freshEv := appendEventAt(t, st, "render", "fresh-3", now.Add(-1*time.Minute), []byte("c"))
+	notifier.Publish("render", freshEv.Sequence)
+
+	msg, ok := readWithDeadline(stream, 2*time.Second)
+	if !ok {
+		t.Fatal("never received fresh event")
+	}
+	if msg.ID != "3" {
+		t.Fatalf("got id %q, want 3 — cursor was not advanced past stale events on initial drain", msg.ID)
+	}
+	// Make sure no further (re-emitted stale) event sneaks in.
+	if extra, ok := readWithDeadline(stream, 500*time.Millisecond); ok && extra.ID != "" {
+		t.Fatalf("unexpected extra msg id=%q after fresh event", extra.ID)
+	}
+}
+
+func TestLiveTailDoesNotFilter(t *testing.T) {
+	h, st, notifier, tok, _ := setup(t)
+	now := time.Date(2026, 5, 9, 12, 0, 0, 0, time.UTC)
+	h.Now = fixedNow(now)
+	srv := startServer(t, h)
+
+	resp, stream, cancel := connect(t, srv, tok, "/subscribe/render?since=0")
+	defer cancel()
+	defer resp.Body.Close()
+
+	// Wait for initial drain to drain (no events seeded).
+	if msg, ok := readWithDeadline(stream, 500*time.Millisecond); ok && msg.ID != "" {
+		t.Fatalf("unexpected initial msg id=%q", msg.ID)
+	}
+
+	// Now write a stale event directly to the store and notify. Live tail
+	// must not filter — this models manual replay of an old event to a
+	// currently-connected SSE subscriber.
+	staleEv := appendEventAt(t, st, "render", "stale-live", now.Add(-30*time.Minute), []byte("body"))
+	notifier.Publish("render", staleEv.Sequence)
+
+	msg, ok := readWithDeadline(stream, 2*time.Second)
+	if !ok {
+		t.Fatal("live tail did not deliver stale event")
+	}
+	if msg.ID != "1" {
+		t.Fatalf("got id %q, want 1", msg.ID)
+	}
+}
+
+func TestInitialBackfillBoundaryAtExactlySkew(t *testing.T) {
+	h, st, _, tok, _ := setup(t)
+	now := time.Date(2026, 5, 9, 12, 0, 0, 0, time.UTC)
+	h.Now = fixedNow(now)
+	srv := startServer(t, h)
+
+	// delta == skew (5 min) → emit. Matches `delta > skew` ingest semantics.
+	appendEventAt(t, st, "render", "boundary-1", now.Add(-5*time.Minute), []byte("body"))
+
+	resp, stream, cancel := connect(t, srv, tok, "/subscribe/render?since=0")
+	defer cancel()
+	defer resp.Body.Close()
+
+	msg, ok := readWithDeadline(stream, 2*time.Second)
+	if !ok {
+		t.Fatal("event at exactly skew was filtered; expected emit")
+	}
+	if msg.ID != "1" {
+		t.Fatalf("got id %q, want 1", msg.ID)
+	}
+}
+
+func TestInitialBackfillFutureTimestampPasses(t *testing.T) {
+	h, st, _, tok, _ := setup(t)
+	now := time.Date(2026, 5, 9, 12, 0, 0, 0, time.UTC)
+	h.Now = fixedNow(now)
+	srv := startServer(t, h)
+
+	appendEventAt(t, st, "render", "future-1", now.Add(1*time.Minute), []byte("body"))
+
+	resp, stream, cancel := connect(t, srv, tok, "/subscribe/render?since=0")
+	defer cancel()
+	defer resp.Body.Close()
+
+	msg, ok := readWithDeadline(stream, 2*time.Second)
+	if !ok {
+		t.Fatal("future-timestamp event was not emitted")
+	}
+	if msg.ID != "1" {
+		t.Fatalf("got id %q, want 1", msg.ID)
+	}
+}
+
+func TestInitialBackfillZeroProviderTimestampPasses(t *testing.T) {
+	h, st, _, tok, _ := setup(t)
+	now := time.Date(2026, 5, 9, 12, 0, 0, 0, time.UTC)
+	h.Now = fixedNow(now)
+	srv := startServer(t, h)
+
+	appendEventAt(t, st, "render", "zero-1", time.Time{}, []byte("body"))
+
+	resp, stream, cancel := connect(t, srv, tok, "/subscribe/render?since=0")
+	defer cancel()
+	defer resp.Body.Close()
+
+	msg, ok := readWithDeadline(stream, 2*time.Second)
+	if !ok {
+		t.Fatal("zero-timestamp event was filtered; expected emit (forward-compat)")
+	}
+	if msg.ID != "1" {
+		t.Fatalf("got id %q, want 1", msg.ID)
+	}
+}
+
+// syncBuf is a goroutine-safe bytes.Buffer wrapper. The handler goroutine
+// writes log lines while the test goroutine reads them; bytes.Buffer alone
+// races under -race.
+type syncBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+func (s *syncBuf) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
+func TestInitialBackfillSkipIsObservable(t *testing.T) {
+	h, st, _, tok, _ := setup(t)
+	logBuf := &syncBuf{}
+	h.Logger = slog.New(slog.NewTextHandler(logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	now := time.Date(2026, 5, 9, 12, 0, 0, 0, time.UTC)
+	h.Now = fixedNow(now)
+	srv := startServer(t, h)
+
+	ev := appendEventAt(t, st, "render", "stale-obs", now.Add(-10*time.Minute), []byte("body"))
+
+	resp, stream, cancel := connect(t, srv, tok, "/subscribe/render?since=0")
+	defer cancel()
+	defer resp.Body.Close()
+	// Drain enough time for the initial drain to run.
+	_, _ = readWithDeadline(stream, 750*time.Millisecond)
+
+	logged := logBuf.String()
+	wantSubs := []string{
+		`level=DEBUG`,
+		`source=render`,
+		fmt.Sprintf("seq=%d", ev.Sequence),
+		`delivery_id=stale-obs`,
+		`age=`,
+		`skew_window=`,
+	}
+	for _, sub := range wantSubs {
+		if !strings.Contains(logged, sub) {
+			t.Fatalf("log missing %q; got: %s", sub, logged)
+		}
+	}
+}
+
+func TestUnknownSourceIs404WithMapShape(t *testing.T) {
+	// Direct construction with the new map shape — exercises the
+	// key-presence-not-value-zero membership rule for /subscribe/<source>.
+	h, _, _, tok, _ := setup(t)
+	h.Sources = map[string]time.Duration{"render": 5 * time.Minute}
+	srv := startServer(t, h)
+
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/subscribe/stripe", nil)
 	req.Header.Set("Authorization", "Bearer "+tok)
 	resp, err := http.DefaultClient.Do(req)
