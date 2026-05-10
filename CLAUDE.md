@@ -90,8 +90,10 @@ inbound webhook ──► /ingest/<source> ──► verifier ──► store.Ap
 
 Listener tokens and PATs share a row schema (`listener_tokens`) but are routed by `kind` at lookup time:
 
-- **`kind='listener'`** — authorizes `/subscribe/<source>` and (when admin-scoped) the inspector. Cannot reach `/api/me/*`.
-- **`kind='pat'`** — owned by a user; authorizes `/api/me/*` and the inspector. Cannot subscribe to event traffic.
+- **`kind='listener'`** — authorizes `/subscribe/<source>` and (when admin-scoped) the JSON management APIs (`/api/tokens`, `/api/push-subscriptions`). Cannot reach `/api/me/*`.
+- **`kind='pat'`** — owned by a user; authorizes `/api/me/*`. Cannot subscribe to event traffic.
+
+Neither token kind authenticates the inspector web UI — that's session-cookie only. Bearer tokens are for `hooksctl` and direct API consumers.
 
 Setting `owner_user_id=NULL` is reserved for system tokens minted by `hooks init` or `hooksctl token add` against an empty DB. NULL ownership does not mutate scopes — system tokens retain whatever scopes they were minted with.
 
