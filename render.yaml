@@ -1,5 +1,6 @@
-# Render Blueprint for the hooks relay. After deploy, follow
-# docs/quickstart.md (section 3b) to bootstrap the admin account.
+# Render Blueprint for the hooks relay. After deploy, follow the README's
+# "Option A — Render Blueprint (one-click)" section to bootstrap the admin
+# account.
 services:
   - type: web
     name: hooks

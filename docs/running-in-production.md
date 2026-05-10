@@ -1,4 +1,6 @@
-# Operations
+# Running hooks in production
+
+Day-2 ops: backups, retention, observability, push-subscription health, restarts, and graceful shutdown. For one-time deployment setup (env vars, `hooks init`, container internals, Render Blueprint), see [`deployment.md`](deployment.md).
 
 ## Backup
 
@@ -12,7 +14,7 @@ This is the SQLite-blessed online-backup form: it cooperates with WAL and is saf
 
 ## Retention and pruning
 
-- Default retention is **30 days per source**, configurable via `retention:` per source.
+- Default retention is **30 days per source**, configurable via `retention:` per source in `hooks.yaml`.
 - Special values: `0` and `forever` disable auto-prune for that source.
 - The pruner wakes once an hour and logs the row count it deleted per source per pass. Log lines look like:
 
@@ -26,6 +28,8 @@ This is the SQLite-blessed online-backup form: it cooperates with WAL and is saf
   hooks prune --older-than 7d
   ```
 
+The same loop also reaps `ephemeral=true` listener tokens whose `last_used_at` is more than 24h in the past (forward crash-safety net) and `device_pairings` rows 24h after terminal state. The audit log is never pruned — growth is bounded by operator actions, not webhook traffic.
+
 ## Observability
 
 In v1 the only observability primitive is structured JSON logs to stderr. Notable events:
@@ -37,19 +41,25 @@ In v1 the only observability primitive is structured JSON logs to stderr. Notabl
 
 `/healthz` returns 200 once the listener is open. `/readyz` returns 200 only when the SQLite store can complete a round-trip ping; use this for load-balancer health checks.
 
-## Multi-process limitations
-
-The default deployment is one process with SQLite. There is **no** built-in coordination for multi-process; SSE delivery and push dispatch assume a single in-process Notifier. The storage interface is shaped to accept a Postgres backend later (and a Redis/NATS pub/sub for cross-process notifications), but that code is not written yet — running two `hooks` processes against the same SQLite file is unsafe.
-
 ## Push-subscription health
 
-Use `/push` (or `hooksctl push list`) to monitor:
+`hooksctl` exposes two parallel command trees for push subscriptions: `hooksctl me sub *` operates only on subscriptions the calling user owns (self-service), and `hooksctl push *` is the admin/operator form that operates on every subscription on the relay (admin scope required). The commands below use `push *` because day-2 ops typically means triaging across the whole relay.
+
+Open the inspector's `/push` page (or run `hooksctl push list`) to monitor:
 
 - **Queue depth**: `latest_sequence_for_source - cursor`. Grows during outages; should return to 0 within seconds after recovery.
 - **`consecutive_failures`**: resets to 0 on the next 2xx.
 - **`last_error` / `last_attempt_at` / `last_success_at`**: last attempt's result and recency.
 
 A subscription that stays in a failing state with `consecutive_failures > 100` produces a single WARN log line on the streak's first crossing of 100. There is no built-in alerting; operators are expected to wire whatever they have (logs to Loki/Datadog, etc.).
+
+To smoke-test a consumer end-to-end without waiting for a real provider event, send a synthetic delivery:
+
+```sh
+hooksctl push test <id>
+```
+
+The relay POSTs a small probe payload to the subscription's URL, signed with the live secret, and reports the consumer's status code. A healthy consumer should: return 2xx within a few seconds, log the `X-Hooks-Delivery-Id`, and validate `X-Hooks-Signature.t` against its current clock. `consecutive_failures` should sit at 0 in steady state — any non-zero baseline means the consumer is dropping deliveries and silently retrying isn't fixing it.
 
 If a target is permanently broken, the safe pause-or-delete commands are:
 
