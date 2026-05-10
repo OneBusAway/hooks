@@ -3,7 +3,7 @@
 
 {{if .IsAdmin}}
 <div class="banner">
-  Viewing your own subscriptions. Admins can manage every owner at <a href="/inspector/push">/inspector/push</a>.
+  Viewing your own subscriptions. Admins can manage every owner at <a href="/push">/push</a>.
 </div>
 {{end}}
 
@@ -26,25 +26,25 @@
     <td>{{if .PausedAt}}paused{{else}}active{{end}}</td>
     <td class="actions">
       {{if .PausedAt}}
-        <form method="post" action="/inspector/me/push/{{.ID}}/resume">
+        <form method="post" action="/me/push/{{.ID}}/resume">
           <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
           <button>Resume</button>
         </form>
       {{else}}
-        <form method="post" action="/inspector/me/push/{{.ID}}/pause">
+        <form method="post" action="/me/push/{{.ID}}/pause">
           <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
           <button>Pause</button>
         </form>
       {{end}}
-      <form method="post" action="/inspector/me/push/{{.ID}}/test">
+      <form method="post" action="/me/push/{{.ID}}/test">
         <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
         <button>Test</button>
       </form>
-      <form method="post" action="/inspector/me/push/{{.ID}}/rotate">
+      <form method="post" action="/me/push/{{.ID}}/rotate">
         <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
         <button>Rotate</button>
       </form>
-      <form method="post" action="/inspector/me/push/{{.ID}}/delete">
+      <form method="post" action="/me/push/{{.ID}}/delete">
         <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
         <button class="danger">Delete</button>
       </form>

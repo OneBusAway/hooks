@@ -43,7 +43,7 @@ The default deployment is one process with SQLite. There is **no** built-in coor
 
 ## Push-subscription health
 
-Use `/inspector/push` (or `hooksctl push list`) to monitor:
+Use `/push` (or `hooksctl push list`) to monitor:
 
 - **Queue depth**: `latest_sequence_for_source - cursor`. Grows during outages; should return to 0 within seconds after recovery.
 - **`consecutive_failures`**: resets to 0 on the next 2xx.

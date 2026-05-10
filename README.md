@@ -73,12 +73,14 @@ sources:
 `--dev` enables verbose logging, opens the inspector in your browser, and prints the URLs you'll need:
 
 ```
-inspector: http://localhost:8080/inspector
+inspector: http://localhost:8080/
 ingest:    http://localhost:8080/ingest/render
 forward:   hooksctl forward render --to http://localhost:3000/webhooks/render
 ```
 
-Leave it running.
+The inspector tab will land on `/login`. To claim your admin account, open the signup URL from step 2 (`http://localhost:8080/signup?code=...`) in the same browser, pick an email + password, and you'll be signed in to the inspector. The `HOOKS_TOKEN` you exported is for `hooksctl`, not the browser.
+
+Leave the relay running.
 
 ### 5. Open a public HTTPS tunnel to it
 
@@ -111,7 +113,7 @@ The fastest trigger is a redeploy of any Render service: `Manual Deploy → Depl
 You should see, in order:
 
 - A `POST /ingest/render` log line in the `hooks --dev` terminal.
-- A new row in the inspector at `http://localhost:8080/inspector` (paste the admin token to log in).
+- A new row in the inspector at `http://localhost:8080/` (sign in with the admin email/password you set during `hooks init`).
 - A `POST /webhooks/render` arriving at your local app via the `hooksctl forward` terminal.
 
 ### 8. (Optional) Register a long-lived push subscription
@@ -158,7 +160,7 @@ See [`docs/accounts.md`](docs/accounts.md) for the full walkthrough (scopes, adm
 - **HTTP 401 in the relay logs** — secret mismatch between `RENDER_WEBHOOK_SECRET` and what Render is signing with. Re-copy the signing secret from the Render dashboard.
 - **HTTP 404** — the URL path is wrong; it must end in `/ingest/render`.
 - **No request reaches the relay at all** — confirm the tunnel URL works in your browser (`/healthz` should return `ok`), and that you saved the updated URL in the Render dashboard.
-- **The `--dev` browser tab won't authenticate** — paste the admin token printed by `hooks init`, not your Render secret.
+- **The `--dev` browser tab won't authenticate** — open the signup URL printed by `hooks init` to claim an admin account first; the inspector signs you in with email/password, not the admin token.
 
 # LICENSE
 

@@ -50,11 +50,10 @@ func newSessionFixture(t *testing.T) *sessionFixture {
 	pmgr := push.New(st.Events(), st.PushSubscriptions(), notifier, slog.New(slog.DiscardHandler))
 	t.Cleanup(pmgr.Stop)
 
-	bearer := tokens.New(st.Tokens())
 	mgr := auth.NewManager(st.Sessions(), st.Users(), audit.New(st.Audit(), slog.New(slog.DiscardHandler)),
 		auth.CookieOptions{TTL: time.Hour})
 
-	in, err := New(st.Events(), st.Tokens(), st.PushSubscriptions(), notifier, pmgr, bearer,
+	in, err := New(st.Events(), st.Tokens(), st.PushSubscriptions(), notifier, pmgr,
 		[]string{"render"}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
@@ -119,12 +118,55 @@ func (f *sessionFixture) get(t *testing.T, path string) *http.Response {
 	return resp
 }
 
-// TestInspector_AnonymousRedirectsToLoginNext (task 11.10): an anonymous
-// GET /inspector redirects to /login?next=/inspector, NOT to the legacy
-// /inspector/login.
+// getBody is like get but returns the response body as a string.
+func (f *sessionFixture) getBody(t *testing.T, path string) (*http.Response, string) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, f.srv.URL+path, nil)
+	resp, err := f.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	return resp, string(body)
+}
+
+// postForm POSTs path with form-encoded values and returns the response
+// plus body.
+func (f *sessionFixture) postForm(t *testing.T, path string, form url.Values) (*http.Response, string) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, f.srv.URL+path, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := f.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	return resp, string(body)
+}
+
+// postCSRF is postForm with the Origin header set to the test server so
+// the request passes the CSRF middleware's same-origin check.
+func (f *sessionFixture) postCSRF(t *testing.T, path string, form url.Values) (*http.Response, string) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, f.srv.URL+path, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", f.srv.URL)
+	resp, err := f.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	return resp, string(body)
+}
+
+// TestInspector_AnonymousRedirectsToLoginNext: an anonymous GET / redirects
+// to /login?next=/.
 func TestInspector_AnonymousRedirectsToLoginNext(t *testing.T) {
 	f := newSessionFixture(t)
-	resp := f.get(t, "/inspector")
+	resp := f.get(t, "/")
 	if resp.StatusCode != http.StatusFound {
 		t.Fatalf("status: %d, want 302", resp.StatusCode)
 	}
@@ -136,43 +178,42 @@ func TestInspector_AnonymousRedirectsToLoginNext(t *testing.T) {
 		t.Fatalf("Location = %q, missing next= parameter", loc)
 	}
 	// next= must point back at the originally-requested path.
-	if !strings.Contains(loc, "next=%2Finspector") && !strings.Contains(loc, "next=/inspector") {
-		t.Fatalf("Location = %q, want next pointing at /inspector", loc)
+	if !strings.Contains(loc, "next=%2F") && !strings.Contains(loc, "next=/") {
+		t.Fatalf("Location = %q, want next pointing at /", loc)
 	}
 }
 
-// TestInspector_NonAdminSessionRedirectsToMe (task 11.10): a logged-in
-// non-admin user GETting /inspector is redirected to /inspector/me.
+// TestInspector_NonAdminSessionRedirectsToMe: a logged-in non-admin user
+// GETting / is redirected to /me.
 func TestInspector_NonAdminSessionRedirectsToMe(t *testing.T) {
 	f := newSessionFixture(t)
 	u := f.makeUser(t, "user@example.com", store.RoleUser)
 	f.loginAs(t, u)
 
-	resp := f.get(t, "/inspector")
+	resp := f.get(t, "/")
 	if resp.StatusCode != http.StatusFound {
 		t.Fatalf("status: %d, want 302", resp.StatusCode)
 	}
 	loc := resp.Header.Get("Location")
-	if loc != "/inspector/me" {
-		t.Fatalf("Location = %q, want /inspector/me", loc)
+	if loc != "/me" {
+		t.Fatalf("Location = %q, want /me", loc)
 	}
 }
 
-// TestInspector_AdminSessionGrantsAccess (task 11.12): a logged-in admin
-// session-cookie user can hit /inspector successfully without any legacy
-// bearer token.
+// TestInspector_AdminSessionGrantsAccess: a logged-in admin can hit /
+// successfully.
 func TestInspector_AdminSessionGrantsAccess(t *testing.T) {
 	f := newSessionFixture(t)
 	u := f.makeUser(t, "admin@example.com", store.RoleAdmin)
 	f.loginAs(t, u)
 
-	resp := f.get(t, "/inspector")
+	resp := f.get(t, "/")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status: %d, want 200", resp.StatusCode)
 	}
 }
 
-// TestInspector_NonAdminMutationReturns403 (task 11.10): a logged-in
+// TestInspector_NonAdminMutationReturns403: a logged-in
 // non-admin POSTing a mutation gets 403, not a redirect (mutations don't
 // redirect; they error).
 func TestInspector_NonAdminMutationReturns403(t *testing.T) {
@@ -180,149 +221,25 @@ func TestInspector_NonAdminMutationReturns403(t *testing.T) {
 	u := f.makeUser(t, "user@example.com", store.RoleUser)
 	f.loginAs(t, u)
 
-	form := url.Values{"name": {"foo"}, "scopes": {"render"}}
-	req, _ := http.NewRequest(http.MethodPost, f.srv.URL+"/inspector/tokens/create",
-		strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
+	resp, _ := f.postForm(t, "/tokens/create", url.Values{"name": {"foo"}, "scopes": {"render"}})
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status: %d, want 403", resp.StatusCode)
 	}
 }
 
-// TestInspector_AnonymousMutationReturns401 (task 11.10): an anonymous
+// TestInspector_AnonymousMutationReturns401: an anonymous
 // POST returns 401 (no redirect for mutations).
 func TestInspector_AnonymousMutationReturns401(t *testing.T) {
 	f := newSessionFixture(t)
-	form := url.Values{"name": {"foo"}, "scopes": {"render"}}
-	req, _ := http.NewRequest(http.MethodPost, f.srv.URL+"/inspector/tokens/create",
-		strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
+	resp, _ := f.postForm(t, "/tokens/create", url.Values{"name": {"foo"}, "scopes": {"render"}})
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status: %d, want 401", resp.StatusCode)
 	}
 }
 
-// TestInspector_LegacyBearerCookieStillWorks (task 11.11): existing admin
-// users with the legacy hooks_inspector_token cookie continue to authenticate
-// fully even with the new session middleware in place.
-func TestInspector_LegacyBearerCookieStillWorks(t *testing.T) {
-	f := newSessionFixture(t)
-	admin, _ := tokens.Issue(context.Background(), f.st.Tokens(), "ops", []string{"admin"})
-
-	srvURL, _ := url.Parse(f.srv.URL)
-	f.client.Jar.SetCookies(srvURL, []*http.Cookie{{
-		Name: "hooks_inspector_token", Value: admin.Plaintext, Path: "/inspector",
-	}})
-
-	resp := f.get(t, "/inspector")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status: %d, want 200", resp.StatusCode)
-	}
-}
-
-// TestInspector_LegacyBearerCookieAuthorizesMutations (task 11.11): the
-// deprecated raw-bearer cookie continues to authenticate state-changing
-// requests for v1. /inspector/tokens/create is a representative mutation:
-// it bypasses the session-cookie CSRF gate (admin-scoped legacy cookie
-// path) and creates a new token row.
-func TestInspector_LegacyBearerCookieAuthorizesMutations(t *testing.T) {
-	f := newSessionFixture(t)
-	admin, _ := tokens.Issue(context.Background(), f.st.Tokens(), "ops", []string{"admin"})
-
-	srvURL, _ := url.Parse(f.srv.URL)
-	f.client.Jar.SetCookies(srvURL, []*http.Cookie{{
-		Name: "hooks_inspector_token", Value: admin.Plaintext, Path: "/inspector",
-	}})
-
-	form := url.Values{"name": {"laptop"}, "scopes": {"render,admin"}}
-	req, _ := http.NewRequest(http.MethodPost,
-		f.srv.URL+"/inspector/tokens/create",
-		strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status: %d, want 200; body=%s", resp.StatusCode, body)
-	}
-	if !strings.Contains(string(body), "shown once") {
-		t.Fatalf("plaintext banner missing: %s", body)
-	}
-
-	// Verify the token actually landed in the store.
-	all, err := f.st.Tokens().List(context.Background(), false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for _, tok := range all {
-		if tok.Name == "laptop" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected token 'laptop' in list, got %v", all)
-	}
-}
-
-// TestInspector_LoginPOSTDeprecationWarning (task 11.11): the v1
-// /inspector/login form continues to function in v1 but emits a
-// `Deprecation` response header so callers know to migrate to /login.
-// (RFC 8594 — the response header form, not the request directive.)
-func TestInspector_LoginPOSTDeprecationWarning(t *testing.T) {
-	f := newSessionFixture(t)
-	admin, _ := tokens.Issue(context.Background(), f.st.Tokens(), "ops", []string{"admin"})
-
-	form := url.Values{"token": {admin.Plaintext}}
-	req, _ := http.NewRequest(http.MethodPost, f.srv.URL+"/inspector/login",
-		strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusFound {
-		t.Fatalf("status: %d, want 302", resp.StatusCode)
-	}
-	if resp.Header.Get("Deprecation") == "" {
-		t.Fatalf("expected Deprecation header on /inspector/login POST")
-	}
-	// Even though we mark this path deprecated, v1 still issues the
-	// legacy cookie so existing operators retain access until v2.
-	gotCookie := false
-	for _, c := range resp.Cookies() {
-		if c.Name == "hooks_inspector_token" && c.Value != "" {
-			gotCookie = true
-		}
-	}
-	if !gotCookie {
-		t.Fatalf("expected legacy hooks_inspector_token cookie still set in v1; got %v",
-			resp.Header.Values("Set-Cookie"))
-	}
-}
-
-// TestInspector_TokensPageShowsOwnerAndKindColumns (task 11.8): admin
-// session view of /inspector/tokens renders an owner column ("system"
-// for owner-NULL rows, the user's email otherwise) plus a kind column
-// distinguishing pat from listener.
+// TestInspector_TokensPageShowsOwnerAndKindColumns: admin view of /tokens
+// renders an owner column ("system" for owner-NULL rows, the user's email
+// otherwise) plus a kind column distinguishing pat from listener.
 func TestInspector_TokensPageShowsOwnerAndKindColumns(t *testing.T) {
 	f := newSessionFixture(t)
 	admin := f.makeUser(t, "admin@example.com", store.RoleAdmin)
@@ -348,12 +265,12 @@ func TestInspector_TokensPageShowsOwnerAndKindColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resp := f.get(t, "/inspector/tokens")
+	resp := f.get(t, "/tokens")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status: %d, want 200", resp.StatusCode)
 	}
 
-	req, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/inspector/tokens", nil)
+	req, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/tokens", nil)
 	r2, _ := f.client.Do(req)
 	body, _ := io.ReadAll(r2.Body)
 	r2.Body.Close()
@@ -372,7 +289,7 @@ func TestInspector_TokensPageShowsOwnerAndKindColumns(t *testing.T) {
 	}
 }
 
-// TestInspector_TokensCreateOnBehalfOfUser (task 11.8): the Add Token
+// TestInspector_TokensCreateOnBehalfOfUser: the Add Token
 // form accepts an optional owner_user_id and mints the token owned by
 // that user. The flow validates the user exists; an unknown id returns
 // 400 without minting.
@@ -388,7 +305,7 @@ func TestInspector_TokensCreateOnBehalfOfUser(t *testing.T) {
 		"kind":          {"pat"},
 		"owner_user_id": {target.ID},
 	}
-	req, _ := http.NewRequest(http.MethodPost, f.srv.URL+"/inspector/tokens/create",
+	req, _ := http.NewRequest(http.MethodPost, f.srv.URL+"/tokens/create",
 		strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := f.client.Do(req)
@@ -416,7 +333,7 @@ func TestInspector_TokensCreateOnBehalfOfUser(t *testing.T) {
 		"scopes":        {"render"},
 		"owner_user_id": {"not-a-user"},
 	}
-	req2, _ := http.NewRequest(http.MethodPost, f.srv.URL+"/inspector/tokens/create",
+	req2, _ := http.NewRequest(http.MethodPost, f.srv.URL+"/tokens/create",
 		strings.NewReader(form2.Encode()))
 	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp2, err := f.client.Do(req2)
@@ -430,8 +347,8 @@ func TestInspector_TokensCreateOnBehalfOfUser(t *testing.T) {
 	}
 }
 
-// TestInspector_PushPageShowsOwnerColumnAndFilter (task 11.9): admin
-// view of /inspector/push renders an owner column and supports
+// TestInspector_PushPageShowsOwnerColumnAndFilter: admin
+// view of /push renders an owner column and supports
 // ?owner=<id>|system filtering.
 func TestInspector_PushPageShowsOwnerColumnAndFilter(t *testing.T) {
 	f := newSessionFixture(t)
@@ -467,7 +384,7 @@ func TestInspector_PushPageShowsOwnerColumnAndFilter(t *testing.T) {
 	}
 
 	// No filter: both rows + owner column ("system" and email).
-	req, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/inspector/push", nil)
+	req, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/push", nil)
 	resp, err := f.client.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -486,7 +403,7 @@ func TestInspector_PushPageShowsOwnerColumnAndFilter(t *testing.T) {
 	}
 
 	// owner=system filter: only the system sub.
-	req2, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/inspector/push?owner=system", nil)
+	req2, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/push?owner=system", nil)
 	resp2, err := f.client.Do(req2)
 	if err != nil {
 		t.Fatal(err)
@@ -503,7 +420,7 @@ func TestInspector_PushPageShowsOwnerColumnAndFilter(t *testing.T) {
 
 	// owner=<user_id> filter: only that user's sub.
 	req3, _ := http.NewRequest(http.MethodGet,
-		f.srv.URL+"/inspector/push?owner="+owner.ID, nil)
+		f.srv.URL+"/push?owner="+owner.ID, nil)
 	resp3, err := f.client.Do(req3)
 	if err != nil {
 		t.Fatal(err)
@@ -519,20 +436,20 @@ func TestInspector_PushPageShowsOwnerColumnAndFilter(t *testing.T) {
 	}
 }
 
-// TestInspector_AllSessionMutationsRequireCSRF (task 11.13 closing
-// coverage): every CSRF-protected /inspector mutation endpoint returns
-// 403 when posted without a `csrf_token` form field, even with a valid
-// session cookie + Origin header. Previously each endpoint had its own
-// per-feature `RequiresCSRF` test (mint PAT, push pause, users invite);
-// this is the parametric sweep that closes the "every form POST without
-// CSRF token returns 403" requirement at one stroke and prevents new
-// endpoints from being added without the same guard.
+// TestInspector_AllSessionMutationsRequireCSRF: every CSRF-protected
+// inspector mutation endpoint returns 403 when posted without a
+// `csrf_token` form field, even with a valid session cookie + Origin
+// header. Previously each endpoint had its own per-feature `RequiresCSRF`
+// test (mint PAT, push pause, users invite); this is the parametric sweep
+// that closes the "every form POST without CSRF token returns 403"
+// requirement at one stroke and prevents new endpoints from being added
+// without the same guard.
 func TestInspector_AllSessionMutationsRequireCSRF(t *testing.T) {
 	f := loadInspectorUsersFixture(t)
 	admin := f.makeUser(t, "admin@example.com", store.RoleAdmin)
 	other := f.makeUser(t, "other@example.com", store.RoleUser)
 	// Insert a user-owned PAT and push subscription so the
-	// /inspector/me/{tokens,push}/{id}/* routes resolve a real id rather
+	// /me/{tokens,push}/{id}/* routes resolve a real id rather
 	// than 404'ing before they ever reach the CSRF check.
 	tok := insertOwnedToken(t, f, admin, "csrf-target", store.TokenKindPAT, []string{"render"})
 	sub := insertOwnedSub(t, f, admin, "render")
@@ -545,18 +462,18 @@ func TestInspector_AllSessionMutationsRequireCSRF(t *testing.T) {
 		name string
 		path string
 	}{
-		{"meCreateToken", "/inspector/me/tokens"},
-		{"meRevokeToken", "/inspector/me/tokens/" + tok.ID + "/revoke"},
-		{"mePushPause", "/inspector/me/push/" + sub.ID + "/pause"},
-		{"mePushResume", "/inspector/me/push/" + sub.ID + "/resume"},
-		{"mePushTest", "/inspector/me/push/" + sub.ID + "/test"},
-		{"mePushRotate", "/inspector/me/push/" + sub.ID + "/rotate"},
-		{"mePushDelete", "/inspector/me/push/" + sub.ID + "/delete"},
-		{"usersInvite", "/inspector/users/invite"},
-		{"usersDeactivate", "/inspector/users/" + other.ID + "/deactivate"},
-		{"usersReactivate", "/inspector/users/" + other.ID + "/reactivate"},
-		{"usersResetPassword", "/inspector/users/" + other.ID + "/reset-password"},
-		{"usersUpdate", "/inspector/users/" + other.ID + "/update"},
+		{"meCreateToken", "/me/tokens"},
+		{"meRevokeToken", "/me/tokens/" + tok.ID + "/revoke"},
+		{"mePushPause", "/me/push/" + sub.ID + "/pause"},
+		{"mePushResume", "/me/push/" + sub.ID + "/resume"},
+		{"mePushTest", "/me/push/" + sub.ID + "/test"},
+		{"mePushRotate", "/me/push/" + sub.ID + "/rotate"},
+		{"mePushDelete", "/me/push/" + sub.ID + "/delete"},
+		{"usersInvite", "/users/invite"},
+		{"usersDeactivate", "/users/" + other.ID + "/deactivate"},
+		{"usersReactivate", "/users/" + other.ID + "/reactivate"},
+		{"usersResetPassword", "/users/" + other.ID + "/reset-password"},
+		{"usersUpdate", "/users/" + other.ID + "/update"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -169,9 +169,9 @@ func Build(cfg *config.Config, registry *sources.Registry, logger *slog.Logger) 
 	pushAPI.Audit = auditRec
 	pushAPI.Register(mux)
 
-	// Inspector. The session manager wires up cookie-session auth that
-	// complements the legacy bearer-cookie path (tasks 11.10, 11.12).
-	insp, err := inspector.New(st.Events(), st.Tokens(), st.PushSubscriptions(), notifier, pmgr, bearerAuth, configuredSources, logger)
+	// Inspector. Session manager is required: the inspector authenticates
+	// only via the hooks_session cookie issued by /login.
+	insp, err := inspector.New(st.Events(), st.Tokens(), st.PushSubscriptions(), notifier, pmgr, configuredSources, logger)
 	if err != nil {
 		_ = st.Close()
 		return nil, err

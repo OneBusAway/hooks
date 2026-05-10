@@ -1,6 +1,6 @@
 {{define "tokens"}}{{template "header" .}}
 <h1>Tokens</h1>
-<form method="post" action="/inspector/tokens/create" class="form-row">
+<form method="post" action="/tokens/create" class="form-row">
   <label>Name <input type="text" name="name" required></label>
   <label>Scopes <input type="text" name="scopes" placeholder="render,admin" required></label>
   <label>Kind
@@ -32,7 +32,7 @@
     <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
     <td>{{if .LastUsedAt}}{{.LastUsedAt.Format "2006-01-02 15:04"}}{{else}}–{{end}}</td>
     <td>
-      <form method="post" action="/inspector/tokens/{{.ID}}/revoke">
+      <form method="post" action="/tokens/{{.ID}}/revoke">
         <button type="submit" class="danger">Revoke</button>
       </form>
     </td>

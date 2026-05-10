@@ -99,9 +99,9 @@ The server honors `$PORT` (which Render injects) automatically, so the Blueprint
 
 ## 4. Claim the first admin account
 
-Open the bootstrap signup URL from step 2 in a browser. Pick an email, name, and password (≥ 12 characters; must not contain your email or its local-part). Submitting the form consumes the bootstrap invite, signs you into the inspector at `/inspector`, and the URL returns 409 from then on.
+Open the bootstrap signup URL from step 2 in a browser. Pick an email, name, and password (≥ 12 characters; must not contain your email or its local-part). Submitting the form consumes the bootstrap invite, signs you into the inspector at `/`, and the URL returns 409 from then on.
 
-If the link expires before you use it, open the service's **Shell** (now available since the deploy is healthy) and re-run `hooks init --force --server-url "$HOOKS_PUBLIC_URL"` to mint a fresh 24-hour invite. Once any user exists, the bootstrap path is closed — invite teammates from `/inspector/users` (or `POST /api/invites`) instead.
+If the link expires before you use it, open the service's **Shell** (now available since the deploy is healthy) and re-run `hooks init --force --server-url "$HOOKS_PUBLIC_URL"` to mint a fresh 24-hour invite. Once any user exists, the bootstrap path is closed — invite teammates from `/users` (or `POST /api/invites`) instead.
 
 ## 5. Register the webhook with Render
 
@@ -153,7 +153,7 @@ The plaintext signing secret only lives in memory, so push delivery for each sub
 
 ## 9. Browse
 
-Open `https://webhooks.example.com/inspector` and sign in with the email/password from step 4. You can browse every captured event, replay any of them to live listeners, manage tokens and push subscriptions, invite teammates, and review the audit log at `/inspector/audit`.
+Open `https://webhooks.example.com/` and sign in with the email/password from step 4. You can browse every captured event, replay any of them to live listeners, manage tokens and push subscriptions, invite teammates, and review the audit log at `/audit`.
 
 ## What `hooks init` does NOT do
 

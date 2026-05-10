@@ -26,7 +26,7 @@ If the bootstrap link expires before it's used, re-run `hooks init` against the 
 
 ## 3. Invite teammates
 
-After login, the inspector at `/inspector/users` exposes an "Issue invite" form. Pick a role (`user` or `admin`) and a default scope set; the page shows the resulting `https://hooks.example.com/signup?code=...` URL once. Send it to your teammate. Invites are single-use.
+After login, the inspector at `/users` exposes an "Issue invite" form. Pick a role (`user` or `admin`) and a default scope set; the page shows the resulting `https://hooks.example.com/signup?code=...` URL once. Send it to your teammate. Invites are single-use.
 
 The same surface is available over JSON at `POST /api/invites` for any tool you'd rather drive programmatically:
 
@@ -101,7 +101,7 @@ The relay prints a per-subscription signing secret **once** — store it on your
 
 ## Admin operations
 
-The inspector exposes admin-only pages at `/inspector/users` (user list + issue-invite form + deactivate / reactivate / reset-password actions) and `/inspector/audit` (audit-log table). The matching JSON endpoints are under `/api/users/*`, `/api/invites/*`, `/api/audit`. v1 ships no `hooksctl` subcommands for these surfaces — drive them via the inspector or `curl` against the JSON API.
+The inspector exposes admin-only pages at `/users` (user list + issue-invite form + deactivate / reactivate / reset-password actions) and `/audit` (audit-log table). The matching JSON endpoints are under `/api/users/*`, `/api/invites/*`, `/api/audit`. v1 ships no `hooksctl` subcommands for these surfaces — drive them via the inspector or `curl` against the JSON API.
 
 ### Deactivating a user
 
@@ -136,7 +136,7 @@ Every admin-meaningful action lands in `audit_events`:
 - `session.create`, `session.delete`
 - `device_pairing.start`, `device_pairing.approve`, `device_pairing.deny`
 
-Surfaced at `/inspector/audit` (admin only). The table is **append-only** — no API or UI deletes entries. Size is small (~few hundred bytes per row, growth driven by operator actions, not webhook traffic).
+Surfaced at `/audit` (admin only). The table is **append-only** — no API or UI deletes entries. Size is small (~few hundred bytes per row, growth driven by operator actions, not webhook traffic).
 
 ## Logging out
 

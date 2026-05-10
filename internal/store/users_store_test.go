@@ -106,9 +106,9 @@ func TestUsers_DeactivateCascade_RevokesTokensAndPausesSubs(t *testing.T) {
 	}
 }
 
-// TestUsers_DeactivateCascade_AtomicityOnContextCancel covers task 9.10's
+// TestUsers_DeactivateCascade_AtomicityOnContextCancel pins the
 // "cascading revoke is atomic (failure mid-tx leaves nothing partially
-// deactivated)". Cancelling the context before the cascade runs forces
+// deactivated)" guarantee. Cancelling the context before the cascade runs forces
 // every internal query to fail; defer-rollback must leave the user
 // active, every owned token unrevoked, and every owned sub unpaused.
 func TestUsers_DeactivateCascade_AtomicityOnContextCancel(t *testing.T) {

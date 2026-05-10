@@ -101,7 +101,7 @@ func TestResolvePlaintextHappyPath(t *testing.T) {
 	}
 }
 
-// TestResolvePlaintext_ExpiredPATReturns401 covers task 8.10's "expired
+// TestResolvePlaintext_ExpiredPATReturns401 covers "expired
 // non-ephemeral PAT (past expires_at) returns 401". The middleware must
 // treat any token whose ExpiresAt has elapsed as invalid, regardless of
 // kind or ephemeral status.

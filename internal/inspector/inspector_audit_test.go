@@ -1,6 +1,6 @@
 package inspector
 
-// Tests for /inspector/audit (tasks 10.4, 10.6, 11.6): admin-only HTML view
+// Tests for /audit: admin-only HTML view
 // of the audit log, with actor email resolution and time-range filtering.
 
 import (
@@ -36,11 +36,11 @@ func insertAuditEvent(t *testing.T, f *sessionFixture, actor store.User, action 
 	return ev
 }
 
-// TestInspectorAudit_AnonymousRedirectsToLogin: GET /inspector/audit with no
-// session redirects to /login?next=/inspector/audit.
+// TestInspectorAudit_AnonymousRedirectsToLogin: GET /audit with no
+// session redirects to /login?next=/audit.
 func TestInspectorAudit_AnonymousRedirectsToLogin(t *testing.T) {
 	f := newSessionFixture(t)
-	resp := f.get(t, "/inspector/audit")
+	resp := f.get(t, "/audit")
 	if resp.StatusCode != http.StatusFound {
 		t.Fatalf("status: %d, want 302", resp.StatusCode)
 	}
@@ -51,26 +51,25 @@ func TestInspectorAudit_AnonymousRedirectsToLogin(t *testing.T) {
 }
 
 // TestInspectorAudit_NonAdminRedirectsToMe: a logged-in non-admin getting
-// /inspector/audit is redirected to /inspector/me (task 10.6: non-admin
-// callers get refused). The redirect path mirrors how requireAdmin handles
-// non-admin sessions on every other admin route.
+// /audit is redirected to /me, mirroring how requireAdmin handles non-admin
+// sessions on every other admin route.
 func TestInspectorAudit_NonAdminRedirectsToMe(t *testing.T) {
 	f := newSessionFixture(t)
 	u := f.makeUser(t, "user@example.com", store.RoleUser)
 	f.loginAs(t, u)
 
-	resp := f.get(t, "/inspector/audit")
+	resp := f.get(t, "/audit")
 	if resp.StatusCode != http.StatusFound {
 		t.Fatalf("status: %d, want 302", resp.StatusCode)
 	}
 	loc := resp.Header.Get("Location")
-	if loc != "/inspector/me" {
-		t.Fatalf("Location = %q, want /inspector/me", loc)
+	if loc != "/me" {
+		t.Fatalf("Location = %q, want /me", loc)
 	}
 }
 
-// TestInspectorAudit_AdminSeesEvents (task 11.6): admin viewing
-// /inspector/audit gets the audit log rendered in HTML, with the actor's
+// TestInspectorAudit_AdminSeesEvents: admin viewing
+// /audit gets the audit log rendered in HTML, with the actor's
 // email resolved (not just the bare user_id).
 func TestInspectorAudit_AdminSeesEvents(t *testing.T) {
 	f := newSessionFixture(t)
@@ -81,7 +80,7 @@ func TestInspectorAudit_AdminSeesEvents(t *testing.T) {
 	insertAuditEvent(t, f, other,
 		audit.ActionUserUpdate, audit.TargetTypeUser, other.ID, time.Now().UTC())
 
-	req, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/inspector/audit", nil)
+	req, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/audit", nil)
 	resp, err := f.client.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -103,7 +102,7 @@ func TestInspectorAudit_AdminSeesEvents(t *testing.T) {
 	}
 }
 
-// TestInspectorAudit_TimeRangeFilter (task 11.6): the page accepts ?since=
+// TestInspectorAudit_TimeRangeFilter: the page accepts ?since=
 // and ?until= RFC3339 timestamps; rows outside the window are omitted.
 func TestInspectorAudit_TimeRangeFilter(t *testing.T) {
 	f := newSessionFixture(t)
@@ -120,7 +119,7 @@ func TestInspectorAudit_TimeRangeFilter(t *testing.T) {
 	since := time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339)
 	q := url.Values{"since": {since}}
 	req, _ := http.NewRequest(http.MethodGet,
-		f.srv.URL+"/inspector/audit?"+q.Encode(), nil)
+		f.srv.URL+"/audit?"+q.Encode(), nil)
 	resp, err := f.client.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -146,7 +145,7 @@ func TestInspectorAudit_BadSinceReturns400(t *testing.T) {
 	f.loginAs(t, admin)
 
 	req, _ := http.NewRequest(http.MethodGet,
-		f.srv.URL+"/inspector/audit?since=not-a-timestamp", nil)
+		f.srv.URL+"/audit?since=not-a-timestamp", nil)
 	resp, err := f.client.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -159,7 +158,7 @@ func TestInspectorAudit_BadSinceReturns400(t *testing.T) {
 }
 
 // TestInspectorAudit_AnonymousMutationReturns401: not actually applicable —
-// /inspector/audit is GET-only — but the route mounting itself shouldn't
+// /audit is GET-only — but the route mounting itself shouldn't
 // expose a POST handler. We exercise this by issuing a POST and asserting
 // 405 (method not allowed) is the worst-case outcome (Go's ServeMux returns
 // 405 when the path has GET registered but no method match).
@@ -168,7 +167,7 @@ func TestInspectorAudit_PostNotAllowed(t *testing.T) {
 	admin := f.makeUser(t, "admin@example.com", store.RoleAdmin)
 	f.loginAs(t, admin)
 
-	req, _ := http.NewRequest(http.MethodPost, f.srv.URL+"/inspector/audit",
+	req, _ := http.NewRequest(http.MethodPost, f.srv.URL+"/audit",
 		strings.NewReader(""))
 	resp, err := f.client.Do(req)
 	if err != nil {

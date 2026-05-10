@@ -280,7 +280,7 @@ func TestDeactivate_CascadesTokensAndSubs(t *testing.T) {
 	}
 }
 
-// TestReactivate_DoesNotRestoreTokens covers task 9.10's "reactivation
+// TestReactivate_DoesNotRestoreTokens covers consolidated "reactivation
 // does not auto-restore tokens" requirement. Once a user is deactivated
 // (cascading revoke + paused subs), reactivating clears deactivated_at
 // only — every previously revoked token stays revoked, every paused
@@ -343,7 +343,7 @@ func TestReactivate_DoesNotRestoreTokens(t *testing.T) {
 	}
 }
 
-// TestPatchToken_OwnershipReflectedInMe covers task 9.10's "ownership
+// TestPatchToken_OwnershipReflectedInMe covers consolidated "ownership
 // transfer is reflected in /api/me calls by the new owner". After admin
 // reassigns a token via PATCH /api/tokens/{id}, the previous owner's
 // /api/me/tokens listing drops it and the new owner's listing gains it.
@@ -389,7 +389,7 @@ func TestPatchToken_OwnershipReflectedInMe(t *testing.T) {
 	}
 }
 
-// TestResetPassword_RejectsShortPasswords covers task 9.10's "password
+// TestResetPassword_RejectsShortPasswords covers consolidated "password
 // reset rejects short passwords". The admin endpoint runs the same
 // ValidatePolicy as signup, so a short password yields 400.
 func TestResetPassword_RejectsShortPasswords(t *testing.T) {
@@ -491,7 +491,7 @@ func TestListAudit_AdminOK_NonAdmin403(t *testing.T) {
 	}
 }
 
-// TestAuditCoverage_AdminActions (task 10.6): each representative admin
+// TestAuditCoverage_AdminActions: each representative admin
 // action produces exactly one audit_events row with the expected action,
 // target_type, and target_id. The breadth here is intentional but bounded:
 // we exercise three distinct actions per audit constant family

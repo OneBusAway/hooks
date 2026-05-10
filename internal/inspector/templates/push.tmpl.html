@@ -5,7 +5,7 @@
 <div class="banner">New signing secret (shown once): <code>{{.Plaintext}}</code></div>
 {{end}}
 
-<form method="get" action="/inspector/push" class="form-row">
+<form method="get" action="/push" class="form-row">
   <label>Owner
     <select name="owner" onchange="this.form.submit()">
       {{$active := .OwnerFilter}}
@@ -17,7 +17,7 @@
   <noscript><button type="submit">Filter</button></noscript>
 </form>
 
-<form method="post" action="/inspector/push/create" class="form-row">
+<form method="post" action="/push/create" class="form-row">
   <label>Source <input type="text" name="source" required></label>
   <label>Target URL <input type="url" name="target_url" required></label>
   <label>Name <input type="text" name="name"></label>
@@ -40,13 +40,13 @@
     <td>{{if .PausedAt}}paused{{else}}active{{end}}</td>
     <td class="actions">
       {{if .PausedAt}}
-        <form method="post" action="/inspector/push/{{.ID}}/resume"><button>Resume</button></form>
+        <form method="post" action="/push/{{.ID}}/resume"><button>Resume</button></form>
       {{else}}
-        <form method="post" action="/inspector/push/{{.ID}}/pause"><button>Pause</button></form>
+        <form method="post" action="/push/{{.ID}}/pause"><button>Pause</button></form>
       {{end}}
-      <form method="post" action="/inspector/push/{{.ID}}/test"><button>Test</button></form>
-      <form method="post" action="/inspector/push/{{.ID}}/rotate"><button>Rotate</button></form>
-      <form method="post" action="/inspector/push/{{.ID}}/delete"><button class="danger">Delete</button></form>
+      <form method="post" action="/push/{{.ID}}/test"><button>Test</button></form>
+      <form method="post" action="/push/{{.ID}}/rotate"><button>Rotate</button></form>
+      <form method="post" action="/push/{{.ID}}/delete"><button class="danger">Delete</button></form>
     </td>
   </tr>
   {{else}}

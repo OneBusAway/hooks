@@ -11,7 +11,7 @@
 
 {{if .IsAdmin}}
 <p class="admin-links">
-  Admin: <a href="/inspector/users">manage users</a> · <a href="/inspector/audit">audit log</a>
+  Admin: <a href="/users">manage users</a> · <a href="/audit">audit log</a>
 </p>
 {{end}}
 
@@ -34,7 +34,7 @@
 </div>
 {{end}}
 
-<form method="post" action="/inspector/me/tokens" class="form-row">
+<form method="post" action="/me/tokens" class="form-row">
   <label>Name <input type="text" name="name" required></label>
   <label>Scopes <input type="text" name="scopes" placeholder="render"></label>
   <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
@@ -55,7 +55,7 @@
     <td>{{if .LastUsedAt}}{{.LastUsedAt.Format "2006-01-02 15:04"}}{{else}}–{{end}}</td>
     <td>{{if .ExpiresAt}}{{.ExpiresAt.Format "2006-01-02"}}{{else}}–{{end}}</td>
     <td>
-      <form method="post" action="/inspector/me/tokens/{{.ID}}/revoke">
+      <form method="post" action="/me/tokens/{{.ID}}/revoke">
         <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
         <button type="submit" class="danger">Revoke</button>
       </form>
@@ -68,7 +68,7 @@
 </table>
 
 <h2>My push subscriptions</h2>
-<p class="muted"><a href="/inspector/me/push">Manage subscriptions →</a></p>
+<p class="muted"><a href="/me/push">Manage subscriptions →</a></p>
 <table>
   <thead><tr><th>ID</th><th>Source</th><th>Target</th><th>Cursor</th><th>Failures</th><th>Last error</th><th>Status</th></tr></thead>
   <tbody>

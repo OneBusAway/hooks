@@ -1,6 +1,6 @@
 package inspector
 
-// Tests for /inspector/me (task 11.4): profile + own tokens (filtered by
+// Tests for /me: profile + own tokens (filtered by
 // kind) + own subscriptions + ephemeral-PAT mint form.
 
 import (
@@ -68,11 +68,11 @@ func (f *sessionFixture) primeCSRF(t *testing.T, value string) {
 	}})
 }
 
-// TestInspectorMe_AnonymousRedirectsToLogin: /inspector/me with no session
-// redirects to /login?next=/inspector/me.
+// TestInspectorMe_AnonymousRedirectsToLogin: /me with no session redirects
+// to /login?next=/me.
 func TestInspectorMe_AnonymousRedirectsToLogin(t *testing.T) {
 	f := newSessionFixture(t)
-	resp := f.get(t, "/inspector/me")
+	resp := f.get(t, "/me")
 	if resp.StatusCode != http.StatusFound {
 		t.Fatalf("status: %d, want 302", resp.StatusCode)
 	}
@@ -80,8 +80,8 @@ func TestInspectorMe_AnonymousRedirectsToLogin(t *testing.T) {
 	if !strings.HasPrefix(loc, "/login") || !strings.Contains(loc, "next=") {
 		t.Fatalf("Location = %q, want /login?next=...", loc)
 	}
-	if !strings.Contains(loc, "%2Finspector%2Fme") && !strings.Contains(loc, "/inspector/me") {
-		t.Fatalf("Location = %q, want next pointing at /inspector/me", loc)
+	if !strings.Contains(loc, "%2Fme") {
+		t.Fatalf("Location = %q, want next pointing at /me", loc)
 	}
 }
 
@@ -91,13 +91,7 @@ func TestInspectorMe_ShowsProfile(t *testing.T) {
 	u := f.makeUser(t, "user@example.com", store.RoleUser)
 	f.loginAs(t, u)
 
-	req, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/inspector/me", nil)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	resp, body := f.getBody(t, "/me")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status: %d, want 200, body=%s", resp.StatusCode, string(body))
 	}
@@ -120,13 +114,7 @@ func TestInspectorMe_OnlyShowsOwnTokens(t *testing.T) {
 	notMine := insertOwnedToken(t, f, bob, "bob-pat", store.TokenKindPAT, []string{"render", "account"})
 
 	f.loginAs(t, alice)
-	req, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/inspector/me", nil)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	resp, body := f.getBody(t, "/me")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status: %d, want 200, body=%s", resp.StatusCode, string(body))
 	}
@@ -147,14 +135,8 @@ func TestInspectorMe_KindFilterHidesOtherKinds(t *testing.T) {
 	lst := insertOwnedToken(t, f, u, "l-mine", store.TokenKindListener, []string{"render"})
 
 	f.loginAs(t, u)
-	req, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/inspector/me?kind=pat", nil)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	s := string(body)
+	_, body := f.getBody(t, "/me?kind=pat")
+	s := body
 	if !strings.Contains(s, pat.Name) {
 		t.Errorf("kind=pat should still show pat token: %s", s)
 	}
@@ -174,13 +156,7 @@ func TestInspectorMe_OnlyShowsOwnSubscriptions(t *testing.T) {
 	notMine := insertOwnedSub(t, f, bob, "render")
 
 	f.loginAs(t, alice)
-	req, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/inspector/me", nil)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_, body := f.getBody(t, "/me")
 	if !strings.Contains(string(body), mine.ID) {
 		t.Errorf("missing own sub id: %s", string(body))
 	}
@@ -189,26 +165,20 @@ func TestInspectorMe_OnlyShowsOwnSubscriptions(t *testing.T) {
 	}
 }
 
-// TestInspectorMe_AdminSeesAdminLinks: an admin viewing /inspector/me sees
-// links to /inspector/users and /inspector/audit; a regular user does not.
+// TestInspectorMe_AdminSeesAdminLinks: an admin viewing /me sees
+// links to /users and /audit; a regular user does not.
 func TestInspectorMe_AdminSeesAdminLinks(t *testing.T) {
 	f := newSessionFixture(t)
 	admin := f.makeUser(t, "admin@example.com", store.RoleAdmin)
 	f.loginAs(t, admin)
 
-	req, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/inspector/me", nil)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_, body := f.getBody(t, "/me")
 	s := string(body)
-	if !strings.Contains(s, "/inspector/users") {
-		t.Errorf("admin missing /inspector/users link: %s", s)
+	if !strings.Contains(s, "/users") {
+		t.Errorf("admin missing /users link: %s", s)
 	}
-	if !strings.Contains(s, "/inspector/audit") {
-		t.Errorf("admin missing /inspector/audit link: %s", s)
+	if !strings.Contains(s, "/audit") {
+		t.Errorf("admin missing /audit link: %s", s)
 	}
 }
 
@@ -217,19 +187,13 @@ func TestInspectorMe_NonAdminDoesNotSeeAdminLinks(t *testing.T) {
 	u := f.makeUser(t, "user@example.com", store.RoleUser)
 	f.loginAs(t, u)
 
-	req, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/inspector/me", nil)
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_, body := f.getBody(t, "/me")
 	s := string(body)
-	if strings.Contains(s, `href="/inspector/users"`) {
-		t.Errorf("non-admin saw /inspector/users link: %s", s)
+	if strings.Contains(s, `href="/users"`) {
+		t.Errorf("non-admin saw /users link: %s", s)
 	}
-	if strings.Contains(s, `href="/inspector/audit"`) {
-		t.Errorf("non-admin saw /inspector/audit link: %s", s)
+	if strings.Contains(s, `href="/audit"`) {
+		t.Errorf("non-admin saw /audit link: %s", s)
 	}
 }
 
@@ -250,7 +214,7 @@ func TestInspectorMe_MintEphemeralPATRequiresCSRF(t *testing.T) {
 		"scopes": {"render"},
 		// no csrf_token
 	}
-	req, _ := http.NewRequest(http.MethodPost, f.srv.URL+"/inspector/me/tokens",
+	req, _ := http.NewRequest(http.MethodPost, f.srv.URL+"/me/tokens",
 		strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := f.client.Do(req)
@@ -283,7 +247,7 @@ func TestInspectorMe_MintEphemeralPATSuccess(t *testing.T) {
 		"scopes":     {"render"},
 		"csrf_token": {csrf},
 	}
-	req, _ := http.NewRequest(http.MethodPost, f.srv.URL+"/inspector/me/tokens",
+	req, _ := http.NewRequest(http.MethodPost, f.srv.URL+"/me/tokens",
 		strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	// CSRF middleware also requires Origin to match.
@@ -344,7 +308,7 @@ func TestInspectorMe_MintRejectsScopesAboveCallerAuthority(t *testing.T) {
 		"scopes":     {"render"},
 		"csrf_token": {csrf},
 	}
-	req, _ := http.NewRequest(http.MethodPost, f.srv.URL+"/inspector/me/tokens",
+	req, _ := http.NewRequest(http.MethodPost, f.srv.URL+"/me/tokens",
 		strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", f.srv.URL)
@@ -360,7 +324,7 @@ func TestInspectorMe_MintRejectsScopesAboveCallerAuthority(t *testing.T) {
 }
 
 // TestInspectorMe_RevokeOwnToken: a logged-in user can revoke their own
-// token through /inspector/me/tokens/{id}/revoke.
+// token through /me/tokens/{id}/revoke.
 func TestInspectorMe_RevokeOwnToken(t *testing.T) {
 	f := newSessionFixture(t)
 	u := f.makeUser(t, "user@example.com", store.RoleUser)
@@ -371,7 +335,7 @@ func TestInspectorMe_RevokeOwnToken(t *testing.T) {
 
 	form := url.Values{"csrf_token": {csrf}}
 	req, _ := http.NewRequest(http.MethodPost,
-		f.srv.URL+"/inspector/me/tokens/"+mine.ID+"/revoke",
+		f.srv.URL+"/me/tokens/"+mine.ID+"/revoke",
 		strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", f.srv.URL)
@@ -408,7 +372,7 @@ func TestInspectorMe_CannotRevokeAnotherUsersToken(t *testing.T) {
 
 	form := url.Values{"csrf_token": {csrf}}
 	req, _ := http.NewRequest(http.MethodPost,
-		f.srv.URL+"/inspector/me/tokens/"+bobs.ID+"/revoke",
+		f.srv.URL+"/me/tokens/"+bobs.ID+"/revoke",
 		strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", f.srv.URL)

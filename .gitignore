@@ -5,3 +5,4 @@
 hooks.yaml
 .env
 .claude/scheduled_tasks.lock
+.playwright-mcp/

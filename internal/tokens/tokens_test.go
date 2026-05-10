@@ -119,8 +119,8 @@ func TestUnknownTokenIs401(t *testing.T) {
 	}
 }
 
-// TestPATKindCannotAuthorizeSource covers task 8.10's "PAT cannot subscribe → 403"
-// alongside task 8.7's design rule: PATs are for /api/me, not /subscribe.
+// TestPATKindCannotAuthorizeSource covers "PAT cannot subscribe → 403"
+// alongside design rule: PATs are for /api/me, not /subscribe.
 // Even with a matching source scope, kind='pat' must yield 403.
 func TestPATKindCannotAuthorizeSource(t *testing.T) {
 	s := newSQLite(t)

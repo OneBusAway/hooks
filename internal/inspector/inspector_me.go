@@ -1,15 +1,9 @@
 package inspector
 
-// /inspector/me — user self-service (task 11.4): profile, own tokens
-// (filtered by kind), own subscriptions, and a CSRF-protected form for
-// minting an ephemeral PAT. Admins additionally see links to
-// /inspector/users and /inspector/audit.
-//
-// Authentication is session-only. The legacy hooks_inspector_token
-// raw-bearer cookie carries no "current user" — there is no row in the
-// users table for those tokens — so this surface refuses to render in
-// that mode and redirects to /login (task 11.10) just like an anonymous
-// caller would.
+// /me — user self-service: profile, own tokens (filtered by kind), own
+// subscriptions, and a CSRF-protected form for minting an ephemeral PAT.
+// Admins additionally see links to /users and /audit. Anonymous callers
+// redirect to /login.
 
 import (
 	"errors"
@@ -24,7 +18,7 @@ import (
 	"github.com/onebusaway/hooks/internal/tokens"
 )
 
-// meTokenRow is one row in the /inspector/me tokens table.
+// meTokenRow is one row in the /me tokens table.
 type meTokenRow struct {
 	ID         string
 	Name       string
@@ -36,7 +30,7 @@ type meTokenRow struct {
 	ExpiresAt  *time.Time
 }
 
-// meSubRow is one row in the /inspector/me subscriptions table.
+// meSubRow is one row in the /me subscriptions table.
 type meSubRow struct {
 	ID                  string
 	Source              string
@@ -55,7 +49,7 @@ type meSubRow struct {
 // true on success; on failure the response is already written.
 func (in *Inspector) requireSessionUser(w http.ResponseWriter, r *http.Request) (store.User, bool) {
 	if in.Sessions == nil {
-		// Without a session manager wired in, /inspector/me cannot
+		// Without a session manager wired in, /me cannot
 		// authenticate. Redirect anonymous-style.
 		in.denyUnauthorized(w, r)
 		return store.User{}, false
@@ -68,7 +62,7 @@ func (in *Inspector) requireSessionUser(w http.ResponseWriter, r *http.Request) 
 	return user, true
 }
 
-// meIndex renders /inspector/me. Optional ?kind=pat|listener narrows the
+// meIndex renders /me. Optional ?kind=pat|listener narrows the
 // tokens table to just one kind; missing/empty leaves it un-filtered.
 func (in *Inspector) meIndex(w http.ResponseWriter, r *http.Request) {
 	user, ok := in.requireSessionUser(w, r)
@@ -251,5 +245,5 @@ func (in *Inspector) meRevokeToken(w http.ResponseWriter, r *http.Request) {
 			Metadata:    map[string]any{"via": "inspector/me"},
 		})
 	}
-	http.Redirect(w, r, "/inspector/me", http.StatusSeeOther)
+	http.Redirect(w, r, "/me", http.StatusSeeOther)
 }

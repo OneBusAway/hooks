@@ -125,14 +125,14 @@ func printDevQuickstart(srv *server.Server) {
 	}
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "hooks --dev quickstart:")
-	fmt.Fprintf(os.Stderr, "  inspector: http://%s/inspector\n", host)
+	fmt.Fprintf(os.Stderr, "  inspector: http://%s/\n", host)
 	for source := range srv.Cfg.Sources {
 		fmt.Fprintf(os.Stderr, "  ingest:    http://%s/ingest/%s\n", host, source)
 		fmt.Fprintf(os.Stderr, "  forward:   hooksctl forward %s --to http://localhost:3000/webhooks/%s\n", source, source)
 		fmt.Fprintf(os.Stderr, "  push add:  hooksctl push add --source %s --to https://my-svc.example.com/hooks\n", source)
 	}
 	fmt.Fprintln(os.Stderr, "")
-	openBrowser(fmt.Sprintf("http://%s/inspector", host))
+	openBrowser(fmt.Sprintf("http://%s/", host))
 }
 
 func openBrowser(url string) {
