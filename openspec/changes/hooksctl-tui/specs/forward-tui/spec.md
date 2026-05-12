@@ -26,7 +26,7 @@ The TUI header SHALL display four rows of session metadata: (1) session state pi
 
 #### Scenario: Paused state
 - **WHEN** the user presses `p`
-- **THEN** the session pill reads `● paused` in amber and inbound forwarding is queued
+- **THEN** the session pill reads `● paused` in amber; events continue to arrive but the visual state reflects paused
 
 #### Scenario: Token fingerprint display
 - **WHEN** the TUI renders the token row
@@ -76,7 +76,11 @@ Each delivery row SHALL render fixed-width columns in this order: timestamp (12)
 
 #### Scenario: Column drop below 80 cols
 - **WHEN** terminal width drops below 80 columns
-- **THEN** suffix, then size, then latency columns are dropped right-to-left
+- **THEN** suffix column is dropped
+- **WHEN** terminal width drops below 73 columns
+- **THEN** size column is also dropped
+- **WHEN** terminal width drops below 65 columns
+- **THEN** latency column is also dropped
 
 ---
 
@@ -94,7 +98,7 @@ The TUI SHALL recompute layout on every `tea.WindowSizeMsg`. Below 24 rows the i
 ---
 
 ### Requirement: Keybind bar
-A persistent single-row footer SHALL always be visible and SHALL render inverted key chips followed by action labels: `c` copy URL, `w` web UI, `r` replay last, `p` pause/resume, `?` help, `q` quit.
+A persistent single-row footer SHALL always be visible and SHALL render inverted key chips followed by action labels: `c` copy URL, `p` pause/resume, `?` help, `q` quit.
 
 #### Scenario: Footer always rendered
 - **WHEN** the TUI is active regardless of scroll position
@@ -107,33 +111,11 @@ Pressing `c` SHALL write the public forwarding URL to the system clipboard and s
 
 #### Scenario: Clipboard success
 - **WHEN** the user presses `c` and clipboard write succeeds
-- **THEN** a toast "URL copied" appears below the keybind bar for 1.5 seconds then disappears
+- **THEN** the keybind bar text is replaced by "URL copied" for 1.5 seconds, then the bar is restored
 
 #### Scenario: Clipboard failure
 - **WHEN** the user presses `c` and clipboard write fails
-- **THEN** a toast "copy failed — no clipboard" appears for 1.5 seconds
-
----
-
-### Requirement: Open web UI
-Pressing `w` SHALL open the hooks server web dashboard URL in the system default browser.
-
-#### Scenario: Open browser
-- **WHEN** the user presses `w`
-- **THEN** the OS default browser opens to the hooks server URL
-
----
-
-### Requirement: Replay last delivery
-Pressing `r` SHALL re-send the most recent completed delivery to the local target via the existing replay API.
-
-#### Scenario: Replay triggered
-- **WHEN** the user presses `r` and at least one delivery exists
-- **THEN** the replay API is called for the most recent delivery ID
-
-#### Scenario: No deliveries
-- **WHEN** the user presses `r` and the delivery buffer is empty
-- **THEN** the key press is a no-op
+- **THEN** the keybind bar text is replaced by "copy failed — no clipboard" for 1.5 seconds, then the bar is restored
 
 ---
 
@@ -150,20 +132,12 @@ Pressing `?` SHALL show a modal overlay listing all keybindings plus version and
 
 ---
 
-### Requirement: Graceful quit
-Pressing `q` or `^C` SHALL initiate graceful shutdown: in-flight deliveries are drained before exit. A second press SHALL force-quit immediately.
+### Requirement: Quit
+Pressing `q` or `^C` SHALL cancel the SSE consumer and exit immediately.
 
-#### Scenario: First quit key — graceful drain
-- **WHEN** the user presses `q` or `^C` with in-flight deliveries
-- **THEN** the TUI shows a "draining…" indicator and waits for in-flight rows to complete before exiting
-
-#### Scenario: Second quit key — force quit
-- **WHEN** the user presses `q` or `^C` a second time while draining
-- **THEN** the program exits immediately without waiting for in-flight deliveries
-
-#### Scenario: Quit with no in-flight
-- **WHEN** the user presses `q` or `^C` with no in-flight deliveries
-- **THEN** the program exits immediately
+#### Scenario: Quit
+- **WHEN** the user presses `q` or `^C`
+- **THEN** the SSE consumer context is cancelled and the program exits
 
 ---
 

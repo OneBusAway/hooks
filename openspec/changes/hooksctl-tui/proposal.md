@@ -8,8 +8,8 @@
 - **`hooksctl forward` gains a TUI mode** — the command boots into the full-screen dashboard instead of logging to stdout when stdout is a TTY.
 - **Ring-buffered delivery log** — up to 500 deliveries displayed with timestamp, method, path, source, status, latency, size, and optional suffix (retry N/M, error label).
 - **Live session header** — shows session state (online/reconnecting/paused/offline), reconnect count, uptime, account email, forwarding route, and token fingerprint.
-- **Keybind bar** — persistent footer: copy forwarding URL, open web UI, replay last delivery, pause/resume, help overlay, quit.
-- **Graceful quit** — first `q`/`^C` drains in-flight deliveries; second press force-quits.
+- **Keybind bar** — persistent footer: copy forwarding URL, pause/resume, help overlay, quit.
+- **Quit** — `q`/`^C` cancels the SSE consumer and exits immediately.
 - **Responsive layout** — columns drop right-to-left (suffix → size → latency) below 80 cols; identity block collapses to two lines below 24 rows.
 
 ## Capabilities
@@ -24,7 +24,7 @@ _(none — the existing `forward` HTTP/SSE logic is unchanged; the TUI is wired 
 
 ## Impact
 
-- **New dependency**: `github.com/charmbracelet/bubbletea`, `github.com/charmbracelet/bubbles`, `github.com/charmbracelet/lipgloss`, `github.com/atotto/clipboard`.
+- **New dependency**: `github.com/charmbracelet/bubbletea` (v2), `github.com/charmbracelet/bubbles`, `github.com/charmbracelet/lipgloss`, `github.com/atotto/clipboard`.
 - **`cmd/hooksctl`** — `forward` command detects TTY and hands off to the TUI model.
 - **`internal/tui`** — new package; no changes to existing packages.
 - **No server-side changes** — the TUI consumes the existing SSE `/subscribe` stream.

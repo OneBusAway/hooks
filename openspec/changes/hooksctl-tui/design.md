@@ -46,19 +46,41 @@ Alternatives considered: running SSE inside a `tea.Cmd` — awkward because SSE 
 
 Alternatives considered: rendering directly from a slice without viewport (manual scroll math, more error-prone).
 
-### 4. Lip Gloss styles defined at package init, not per-render
+### 4. Bubble Tea v2 + Lip Gloss styles defined at package init, not per-render
 
-`var styles = newStyles()` is called once at startup using `lipgloss.HasDarkBackground`. On `tea.BackgroundColorMsg` the styles are rebuilt. This avoids re-allocating `lipgloss.Style` objects on every frame.
-
-Alternatives considered: passing renderer to each function (Lip Gloss v2 encourages this but Lip Gloss v1 is simpler and already in the ecosystem; pin v1 for now).
+Using Bubble Tea v2. `var styles = newStyles()` is called once at startup using `lipgloss.HasDarkBackground`. On `tea.BackgroundColorMsg` (a v2 feature) the styles are rebuilt. This avoids re-allocating `lipgloss.Style` objects on every frame.
 
 ### 5. `github.com/atotto/clipboard` for copy-URL
 
 Cross-platform clipboard access. Wrapped in a `tea.Cmd` so it doesn't block the update loop. On success fires `clipboardCopiedMsg` which shows a 1.5 s toast.
 
-### 6. TTY detection gates TUI entry
+### 6. Single-phase quit
 
-`cmd/hooksctl/forward.go` checks `golang.org/x/term`.`IsTerminal(int(os.Stdout.Fd()))`. If false, falls back to existing structured-log output unchanged. This means CI/pipe usage is unaffected.
+`q`/`^C` cancels the SSE consumer context and calls `tea.Quit` immediately. No two-phase draining state machine. Forwarding to localhost is sub-100ms; owning delivery completion in the TUI adds state machine complexity for negligible UX benefit.
+
+### 7. Visual-only pause
+
+`p` toggles `m.session.State` between paused and online in the model only. No back-channel to the SSE consumer goroutine. Events continue to arrive; the header pill shows `● paused` in amber. This keeps `internal/tui` a pure presentation layer with a single inbound event channel.
+
+### 8. No open-browser keybind
+
+`w` (open web UI) has no concrete use case and adds platform-specific `exec.Command` dispatch. Removed from keybinds and dependencies.
+
+### 9. Replay deferred to v2
+
+`r` (replay last delivery) requires an API client injected into the TUI package, which conflicts with the package isolation constraint. Deferred.
+
+### 10. Column drop thresholds
+
+Below 80 cols: drop suffix. Below 73 cols: also drop size. Below 65 cols: also drop latency. Fixed columns sum to ~47 chars + path minimum of 12, giving headroom for each step.
+
+### 11. Toast replaces keybind bar
+
+The 1.5 s clipboard toast overwrites the keybind bar text for its duration, then the bar returns. Footer stays one row; no layout reflow on toast appear/dismiss.
+
+### 12. TTY detection gates TUI entry
+
+`cmd/hooksctl/forward.go` checks `golang.org/x/term.IsTerminal(int(os.Stdout.Fd()))`. If false, falls back to existing structured-log output unchanged. This means CI/pipe usage is unaffected.
 
 ## Risks / Trade-offs
 
@@ -81,4 +103,3 @@ Rollback: revert the TTY-detection branch in `forward.go`; the rest of the code 
 ## Open Questions
 
 - **Should `hooksctl tail` also get TUI treatment?** Tail is read-only and simpler — leave for v2.
-- **Lip Gloss v1 vs v2?** v2 is in beta; stick with stable v1 (`v0.x`) for now and migrate after GA.

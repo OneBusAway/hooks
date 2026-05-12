@@ -18,16 +18,16 @@
 
 ## 4. Core Model
 
-- [ ] 4.1 Define `Model` struct with fields: `session SessionInfo`, `deliveries []Delivery` (ring buffer), `viewport viewport.Model`, `help help.Model`, `showHelp bool`, `atBottom bool`, `toastMsg string`, `toastExpiry time.Time`, `termW int`, `termH int`, `draining bool`, `keys keyMap`
+- [ ] 4.1 Define `Model` struct with fields: `session SessionInfo`, `deliveries []Delivery` (ring buffer), `viewport viewport.Model`, `help help.Model`, `showHelp bool`, `atBottom bool`, `toastMsg string`, `toastExpiry time.Time`, `termW int`, `termH int`, `keys keyMap`
 - [ ] 4.2 Implement `New(session SessionInfo) Model` constructor that initialises the viewport and help model
 - [ ] 4.3 Implement `Init() tea.Cmd` — returns `tea.Batch(tickCmd(), tea.RequestBackgroundColor)`
 - [ ] 4.4 Implement ring-buffer append helper `appendDelivery(m *Model, d Delivery)` that evicts oldest when len >= 500
 
 ## 5. Key Bindings
 
-- [ ] 5.1 Define `keyMap` struct with `key.Binding` fields: `copyURL`, `openWeb`, `replayLast`, `pause`, `help`, `quit`
+- [ ] 5.1 Define `keyMap` struct with `key.Binding` fields: `copyURL`, `pause`, `help`, `quit`
 - [ ] 5.2 Implement `ShortHelp()` and `FullHelp()` on `keyMap` for the bubbles `help.Model`
-- [ ] 5.3 Wire key bindings in `Update()` — `c`, `w`, `r`, `p`, `?`, `q`, `ctrl+c`
+- [ ] 5.3 Wire key bindings in `Update()` — `c`, `p`, `?`, `q`, `ctrl+c`
 
 ## 6. Update Logic
 
@@ -38,8 +38,8 @@
 - [ ] 6.5 Handle `SessionStateMsg` — update `m.session`, re-render header
 - [ ] 6.6 Handle `tickMsg` — refresh uptime display, expire toast if past `toastExpiry`, return next tick command
 - [ ] 6.7 Handle `clipboardCopiedMsg` — set `toastMsg` and `toastExpiry = time.Now().Add(1.5s)`
-- [ ] 6.8 Implement graceful quit: first `q`/`^C` sets `m.draining = true` (if in-flight rows exist); second press or zero in-flight calls `tea.Quit`
-- [ ] 6.9 Implement pause/resume: toggle `m.session.State` between paused and online, fire command to pause/resume the SSE forwarder
+- [ ] 6.8 Implement quit: `q`/`^C` cancels the SSE consumer context and calls `tea.Quit` immediately
+- [ ] 6.9 Implement visual-only pause/resume: toggle `m.session.State` between paused and online; no back-channel to the SSE goroutine
 
 ## 7. View / Rendering
 
@@ -47,8 +47,8 @@
 - [ ] 7.2 Implement `renderIdentity(m Model) string` — 4-row key/value block (session pill, account, forwarding route, token); collapse to 2 rows when `termH < 24`
 - [ ] 7.3 Implement `renderDivider(w int) string` — `strings.Repeat("─", w)` in dim style
 - [ ] 7.4 Implement `renderDeliveriesHeader() string` — "DELIVERIES" small-caps left, "newest ↓" dim right
-- [ ] 7.5 Implement `renderDeliveryRow(d Delivery, termW int) string` — fixed-width columns with column-drop logic below 80 cols
-- [ ] 7.6 Implement `renderKeybindBar(m Model) string` — inverted key chips + labels; append toast line when active
+- [ ] 7.5 Implement `renderDeliveryRow(d Delivery, termW int) string` — fixed-width columns with column-drop thresholds: suffix dropped below 80 cols, size also dropped below 73, latency also dropped below 65
+- [ ] 7.6 Implement `renderKeybindBar(m Model) string` — inverted key chips + labels; when toast is active, render toast text in place of keybind labels for 1.5 s, then restore
 - [ ] 7.7 Implement `renderHelpOverlay(m Model) string` — modal box listing all bindings + version info
 - [ ] 7.8 Implement `View() string` — compose title + identity + divider + deliveries header + viewport + divider + keybind bar; overlay help modal when `showHelp`
 - [ ] 7.9 Implement `viewportHeight(termH, headerRows int) int` and verify off-by-one with a unit test
@@ -57,8 +57,6 @@
 
 - [ ] 8.1 Implement `tickCmd() tea.Cmd` — fires `tickMsg{time.Now()}` after 1 s using `tea.Tick`
 - [ ] 8.2 Implement `copyURLCmd(url string) tea.Cmd` — calls `clipboard.WriteAll(url)`, returns `clipboardCopiedMsg` or error toast msg
-- [ ] 8.3 Implement `openBrowserCmd(url string) tea.Cmd` — calls `exec.Command("open"/"xdg-open"/"start", url).Start()`
-- [ ] 8.4 Implement `replayCmd(deliveryID string, apiClient ...) tea.Cmd` — calls replay API endpoint
 
 ## 9. TTY Detection & `forward` Command Wiring
 
@@ -74,12 +72,12 @@
 - [ ] 10.2 Unit test `renderDeliveryRow()` for 2xx/4xx/5xx color paths and column-drop at < 80 cols
 - [ ] 10.3 Unit test `appendDelivery()` ring-buffer eviction at cap 500
 - [ ] 10.4 Unit test `Update()` for `DeliveryReceivedMsg` (appends, scroll behavior) and `DeliveryCompletedMsg` (patches in-flight row)
-- [ ] 10.5 Unit test graceful-quit state machine (first press → draining, second press → quit)
+- [ ] 10.5 Unit test quit: `q`/`^C` produces `tea.Quit` immediately regardless of in-flight state
 - [ ] 10.6 Run `make lint && make test` to confirm no regressions
 
 ## 11. Smoke Test & Cleanup
 
 - [ ] 11.1 Run `make dev` and `hooksctl forward render` in a real terminal; verify all regions render correctly
 - [ ] 11.2 Test resize by dragging terminal window; confirm column drop and identity collapse
-- [ ] 11.3 Test `c` (copy URL), `w` (open browser), `p` (pause/resume), `?` (help overlay), `q` (graceful quit)
+- [ ] 11.3 Test `c` (copy URL + toast), `p` (pause/resume pill), `?` (help overlay), `q` (quit)
 - [ ] 11.4 Remove stub `doc.go` if package has real files; ensure no dead code
