@@ -20,7 +20,10 @@ import (
 	"syscall"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+	xterm "github.com/charmbracelet/x/term"
 	"github.com/onebusaway/hooks/internal/push"
+	"github.com/onebusaway/hooks/internal/tui"
 )
 
 // forwardTestCtx is non-nil only in tests; production paths derive their
@@ -84,6 +87,10 @@ func cmdForward(g globals, args []string) int {
 
 	cli := &http.Client{Timeout: *timeout}
 
+	if xterm.IsTerminal(os.Stdout.Fd()) {
+		return runWithTUI(ctx, cancel, g, source, *to, subscribeToken, cursorPath, &startCursor, cli, *exitOnError)
+	}
+
 	for {
 		if err := streamFromCursor(ctx, g, subscribeToken, source, &startCursor, cursorPath, *to, cli, *exitOnError); err != nil {
 			if ctx.Err() != nil {
@@ -105,6 +112,238 @@ func cmdForward(g globals, args []string) int {
 		}
 		return 0
 	}
+}
+
+// runWithTUI runs the forward loop in a goroutine and drives a Bubble Tea TUI
+// in the foreground. cancel is called by the TUI when the user quits.
+func runWithTUI(ctx context.Context, cancel context.CancelFunc, g globals, source, to, subscribeToken, cursorPath string, cursor *int64, cli *http.Client, exitOnError bool) int {
+	prefix, suffix := tokenFingerprint(subscribeToken)
+	baseSession := tui.SessionInfo{
+		State:       tui.StateOnline,
+		UptimeStart: time.Now(),
+		ForwardURL:  strings.TrimRight(g.Server, "/") + "/subscribe/" + source,
+		TargetURL:   to,
+		TokenPrefix: prefix,
+		TokenSuffix: suffix,
+		Scopes:      []string{source},
+	}
+
+	model := tui.New(baseSession, cancel)
+	prog := tea.NewProgram(model)
+
+	go func() {
+		reconnectCount := 0
+		for {
+			prog.Send(tui.SessionStateMsg{Info: tui.SessionInfo{
+				State:          tui.StateOnline,
+				ReconnectCount: reconnectCount,
+				UptimeStart:    baseSession.UptimeStart,
+				ForwardURL:     baseSession.ForwardURL,
+				TargetURL:      baseSession.TargetURL,
+				TokenPrefix:    prefix,
+				TokenSuffix:    suffix,
+				Scopes:         baseSession.Scopes,
+			}})
+
+			err := streamFromCursorTUI(ctx, prog, g, subscribeToken, source, cursor, cursorPath, to, cli, exitOnError)
+			if err == nil || ctx.Err() != nil {
+				return
+			}
+
+			if exitOnError {
+				cancel()
+				return
+			}
+
+			reconnectCount++
+			prog.Send(tui.SessionStateMsg{Info: tui.SessionInfo{
+				State:          tui.StateReconnecting,
+				ReconnectCount: reconnectCount,
+				UptimeStart:    baseSession.UptimeStart,
+				ForwardURL:     baseSession.ForwardURL,
+				TargetURL:      baseSession.TargetURL,
+				TokenPrefix:    prefix,
+				TokenSuffix:    suffix,
+				Scopes:         baseSession.Scopes,
+			}})
+
+			d := backoff()
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(d):
+			}
+		}
+	}()
+
+	defer prog.RestoreTerminal() //nolint:errcheck
+	if _, err := prog.Run(); err != nil {
+		fmt.Fprintln(os.Stderr, "forward:", err)
+		return 1
+	}
+	return 0
+}
+
+// streamFromCursorTUI is like streamFromCursor but sends delivery events to prog.
+func streamFromCursorTUI(ctx context.Context, prog *tea.Program, g globals, bearer, source string, cursor *int64, cursorPath, to string, cli *http.Client, exitOnError bool) error {
+	endpoint := fmt.Sprintf("%s/subscribe/%s?since=%d", strings.TrimRight(g.Server, "/"), source, *cursor)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+bearer)
+	req.Header.Set("Accept", "text/event-stream")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("subscribe returned %d", resp.StatusCode)
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 1<<20), 1<<20)
+	current := map[string]string{}
+	for scanner.Scan() {
+		line := scanner.Text()
+		switch {
+		case line == "":
+			if len(current) == 0 {
+				continue
+			}
+			seq, err := strconv.ParseInt(current["id"], 10, 64)
+			if err != nil {
+				current = map[string]string{}
+				continue
+			}
+			if err := forwardOneTUI(ctx, prog, cli, to, current, source, exitOnError); err != nil {
+				return err
+			}
+			*cursor = seq
+			saveCursor(cursorPath, seq)
+			current = map[string]string{}
+		case strings.HasPrefix(line, ":"):
+			// keepalive
+		default:
+			if i := strings.Index(line, ":"); i >= 0 {
+				current[line[:i]] = strings.TrimPrefix(line[i+1:], " ")
+			}
+		}
+	}
+	return scanner.Err()
+}
+
+// forwardOneTUI forwards a single event and notifies prog of delivery start/completion.
+func forwardOneTUI(ctx context.Context, prog *tea.Program, cli *http.Client, to string, msg map[string]string, source string, exitOnError bool) error {
+	var p struct {
+		DeliveryID        string            `json:"delivery_id"`
+		ProviderTimestamp time.Time         `json:"provider_timestamp"`
+		Headers           map[string]string `json:"headers"`
+		Body              string            `json:"body"`
+	}
+	if err := json.Unmarshal([]byte(msg["data"]), &p); err != nil {
+		return fmt.Errorf("parse event: %w", err)
+	}
+	bodyBytes, err := base64.StdEncoding.DecodeString(p.Body)
+	if err != nil {
+		return fmt.Errorf("decode body: %w", err)
+	}
+
+	delivID := p.DeliveryID
+	if delivID == "" {
+		delivID = msg["id"]
+	}
+
+	prog.Send(tui.DeliveryReceivedMsg{Delivery: tui.Delivery{
+		ID:        delivID,
+		RecvAt:    time.Now(),
+		Method:    "POST",
+		Path:      "/" + source,
+		Source:    source,
+		InFlight:  true,
+		SizeBytes: int64(len(bodyBytes)),
+	}})
+
+	start := time.Now()
+	var finalStatus int
+	var forwardErr error
+
+	for attempt := 0; ; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, to, bytes.NewReader(bodyBytes))
+		if err != nil {
+			forwardErr = err
+			break
+		}
+		for k, v := range p.Headers {
+			if push.IsHopByHop(k) {
+				continue
+			}
+			req.Header.Set(k, v)
+		}
+		req.Header.Set("X-Hooks-Delivery-Id", p.DeliveryID)
+		req.Header.Set("X-Hooks-Sequence", msg["id"])
+		req.Header.Set("X-Hooks-Source", msg["event"])
+
+		resp, err := cli.Do(req)
+		if err != nil {
+			if ctx.Err() != nil {
+				forwardErr = ctx.Err()
+				break
+			}
+			if exitOnError {
+				forwardErr = fmt.Errorf("transport: %w", err)
+				break
+			}
+			if !sleepWithCtx(ctx, attemptBackoff(attempt)) {
+				forwardErr = ctx.Err()
+				break
+			}
+			continue
+		}
+		_ = resp.Body.Close()
+		finalStatus = resp.StatusCode
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			break
+		}
+		if exitOnError {
+			forwardErr = fmt.Errorf("target returned %d", resp.StatusCode)
+			break
+		}
+		if !sleepWithCtx(ctx, attemptBackoff(attempt)) {
+			forwardErr = ctx.Err()
+			break
+		}
+	}
+
+	suffix := ""
+	if forwardErr != nil && ctx.Err() == nil {
+		suffix = "err"
+		if finalStatus == 0 {
+			finalStatus = 0
+		}
+	}
+
+	prog.Send(tui.DeliveryCompletedMsg{
+		ID:         delivID,
+		Status:     finalStatus,
+		DurationMS: time.Since(start).Milliseconds(),
+		Suffix:     suffix,
+	})
+
+	return forwardErr
+}
+
+// tokenFingerprint returns the first 6 and last 3 characters of a token.
+func tokenFingerprint(token string) (prefix, suffix string) {
+	r := []rune(token)
+	if len(r) > 9 {
+		return string(r[:6]), string(r[len(r)-3:])
+	}
+	if len(r) > 3 {
+		return string(r[:3]), string(r[len(r)-3:])
+	}
+	return token, ""
 }
 
 func streamFromCursor(ctx context.Context, g globals, bearer, source string, cursor *int64, cursorPath, to string, cli *http.Client, exitOnError bool) error {
