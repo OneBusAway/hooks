@@ -5,20 +5,19 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 )
 
+// ringCap bounds the in-memory delivery log; 500 rows balances scrollback depth
+// against unbounded memory growth for a long-running session.
 const ringCap = 500
 
-// Model is the Bubble Tea model for the hooksctl forward TUI.
 type Model struct {
 	session     SessionInfo
 	deliveries  []Delivery
 	vp          viewport.Model
-	help        help.Model
 	showHelp    bool
 	atBottom    bool
 	toastMsg    string
@@ -30,7 +29,6 @@ type Model struct {
 	cancel      context.CancelFunc
 }
 
-// New returns a Model ready to be run by a Bubble Tea program.
 func New(session SessionInfo, cancel context.CancelFunc) Model {
 	m := Model{
 		session:  session,
@@ -40,16 +38,13 @@ func New(session SessionInfo, cancel context.CancelFunc) Model {
 		cancel:   cancel,
 	}
 	m.vp = viewport.New()
-	m.help = help.New()
 	return m
 }
 
-// Init satisfies tea.Model.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(tickCmd(), tea.RequestBackgroundColor)
+	return tea.RequestBackgroundColor
 }
 
-// appendDelivery appends d to the ring buffer, evicting the oldest entry when at cap.
 func appendDelivery(m *Model, d Delivery) {
 	if len(m.deliveries) >= ringCap {
 		m.deliveries = m.deliveries[1:]
@@ -57,7 +52,6 @@ func appendDelivery(m *Model, d Delivery) {
 	m.deliveries = append(m.deliveries, d)
 }
 
-// rebuildViewport re-renders all delivery rows into the viewport.
 func rebuildViewport(m *Model) {
 	var sb strings.Builder
 	for i, d := range m.deliveries {
@@ -72,7 +66,6 @@ func rebuildViewport(m *Model) {
 	}
 }
 
-// Update handles all Bubble Tea messages.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
@@ -83,7 +76,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		headerRows := fixedHeaderRows(m.termH)
 		m.vp.SetWidth(m.termW)
 		m.vp.SetHeight(viewportHeight(m.termH, headerRows))
-		m.help.SetWidth(m.termW)
 		rebuildViewport(&m)
 
 	case tea.BackgroundColorMsg:
@@ -106,11 +98,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		rebuildViewport(&m)
 
+	case QuitMsg:
+		if m.cancel != nil {
+			m.cancel()
+		}
+		return m, tea.Quit
+
 	case SessionStateMsg:
 		m.session = msg.Info
 
-	case tickMsg:
-		cmds = append(cmds, tickCmd())
+	case toastExpiredMsg:
 		if !m.toastExpiry.IsZero() && time.Now().After(m.toastExpiry) {
 			m.toastMsg = ""
 			m.toastExpiry = time.Time{}
@@ -119,6 +116,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case clipboardCopiedMsg:
 		m.toastMsg = msg.msg
 		m.toastExpiry = time.Now().Add(1500 * time.Millisecond)
+		cmds = append(cmds, toastExpireCmd())
 
 	case tea.KeyPressMsg:
 		switch {
@@ -129,12 +127,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case key.Matches(msg, m.keys.copyURL):
 			cmds = append(cmds, copyURLCmd(m.session.ForwardURL))
-		case key.Matches(msg, m.keys.pause):
-			if m.session.State == StatePaused {
-				m.session.State = StateOnline
-			} else {
-				m.session.State = StatePaused
-			}
+		case key.Matches(msg, m.keys.dismiss):
+			m.showHelp = false
 		case key.Matches(msg, m.keys.help):
 			m.showHelp = !m.showHelp
 		default:

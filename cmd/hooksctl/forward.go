@@ -30,6 +30,37 @@ import (
 // own context from os signals.
 var forwardTestCtx context.Context
 
+// errSkipEvent is returned when an event payload is permanently malformed.
+// The caller advances the cursor past the broken event rather than reconnecting.
+var errSkipEvent = errors.New("skip event")
+
+type parsedEvent struct {
+	DeliveryID string
+	Headers    map[string]string
+	Body       []byte
+}
+
+func parseEventPayload(msg map[string]string) (parsedEvent, error) {
+	var raw struct {
+		DeliveryID        string            `json:"delivery_id"`
+		ProviderTimestamp time.Time         `json:"provider_timestamp"`
+		Headers           map[string]string `json:"headers"`
+		Body              string            `json:"body"`
+	}
+	if err := json.Unmarshal([]byte(msg["data"]), &raw); err != nil {
+		return parsedEvent{}, fmt.Errorf("%w: parse: %w", errSkipEvent, err)
+	}
+	bodyBytes, err := base64.StdEncoding.DecodeString(raw.Body)
+	if err != nil {
+		return parsedEvent{}, fmt.Errorf("%w: decode: %w", errSkipEvent, err)
+	}
+	delivID := raw.DeliveryID
+	if delivID == "" {
+		delivID = msg["id"]
+	}
+	return parsedEvent{DeliveryID: delivID, Headers: raw.Headers, Body: bodyBytes}, nil
+}
+
 func cmdForward(g globals, args []string) int {
 	fs := newFlagSet("forward")
 	to := fs.String("to", "", "local URL to POST every event to")
@@ -100,7 +131,7 @@ func cmdForward(g globals, args []string) int {
 				fmt.Fprintln(os.Stderr, "forward:", err)
 				return 1
 			}
-			// Backoff capped at 60s; mirrors push policy.
+			// Fixed random reconnect delay in [500ms, 2.5s); see attemptBackoff for per-delivery retry.
 			delay := backoff()
 			fmt.Fprintf(os.Stderr, "forward: %v; reconnecting in %s\n", err, delay)
 			select {
@@ -130,43 +161,42 @@ func runWithTUI(ctx context.Context, cancel context.CancelFunc, g globals, sourc
 
 	model := tui.New(baseSession, cancel)
 	prog := tea.NewProgram(model)
+	defer func() { _ = prog.RestoreTerminal() }()
 
+	errCh := make(chan error, 1)
 	go func() {
 		reconnectCount := 0
 		for {
-			prog.Send(tui.SessionStateMsg{Info: tui.SessionInfo{
-				State:          tui.StateOnline,
-				ReconnectCount: reconnectCount,
-				UptimeStart:    baseSession.UptimeStart,
-				ForwardURL:     baseSession.ForwardURL,
-				TargetURL:      baseSession.TargetURL,
-				TokenPrefix:    prefix,
-				TokenSuffix:    suffix,
-				Scopes:         baseSession.Scopes,
-			}})
+			info := baseSession
+			info.ReconnectCount = reconnectCount
+			prog.Send(tui.SessionStateMsg{Info: info})
 
 			err := streamFromCursorTUI(ctx, prog, g, subscribeToken, source, cursor, cursorPath, to, cli, exitOnError)
+			if err == nil && ctx.Err() == nil {
+				// Server closed the stream cleanly; mirror the non-TUI auto-exit behavior.
+				info := baseSession
+				info.State = tui.StateOffline
+				prog.Send(tui.SessionStateMsg{Info: info})
+				prog.Send(tui.QuitMsg{})
+				return
+			}
 			if err == nil || ctx.Err() != nil {
 				return
 			}
 
 			if exitOnError {
-				cancel()
+				errCh <- err
+				prog.Send(tui.QuitMsg{})
 				return
 			}
 
 			reconnectCount++
-			prog.Send(tui.SessionStateMsg{Info: tui.SessionInfo{
-				State:          tui.StateReconnecting,
-				ReconnectCount: reconnectCount,
-				UptimeStart:    baseSession.UptimeStart,
-				ForwardURL:     baseSession.ForwardURL,
-				TargetURL:      baseSession.TargetURL,
-				TokenPrefix:    prefix,
-				TokenSuffix:    suffix,
-				Scopes:         baseSession.Scopes,
-			}})
+			info = baseSession
+			info.State = tui.StateReconnecting
+			info.ReconnectCount = reconnectCount
+			prog.Send(tui.SessionStateMsg{Info: info})
 
+			fmt.Fprintf(os.Stderr, "forward: %v; reconnecting\n", err)
 			d := backoff()
 			select {
 			case <-ctx.Done():
@@ -176,93 +206,39 @@ func runWithTUI(ctx context.Context, cancel context.CancelFunc, g globals, sourc
 		}
 	}()
 
-	defer prog.RestoreTerminal() //nolint:errcheck
 	if _, err := prog.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "forward:", err)
 		return 1
 	}
-	return 0
+	select {
+	case err := <-errCh:
+		fmt.Fprintln(os.Stderr, "forward:", err)
+		return 1
+	default:
+		return 0
+	}
 }
 
-// streamFromCursorTUI is like streamFromCursor but sends delivery events to prog.
 func streamFromCursorTUI(ctx context.Context, prog *tea.Program, g globals, bearer, source string, cursor *int64, cursorPath, to string, cli *http.Client, exitOnError bool) error {
-	endpoint := fmt.Sprintf("%s/subscribe/%s?since=%d", strings.TrimRight(g.Server, "/"), source, *cursor)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+bearer)
-	req.Header.Set("Accept", "text/event-stream")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("subscribe returned %d", resp.StatusCode)
-	}
-
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 1<<20), 1<<20)
-	current := map[string]string{}
-	for scanner.Scan() {
-		line := scanner.Text()
-		switch {
-		case line == "":
-			if len(current) == 0 {
-				continue
-			}
-			seq, err := strconv.ParseInt(current["id"], 10, 64)
-			if err != nil {
-				current = map[string]string{}
-				continue
-			}
-			if err := forwardOneTUI(ctx, prog, cli, to, current, source, exitOnError); err != nil {
-				return err
-			}
-			*cursor = seq
-			saveCursor(cursorPath, seq)
-			current = map[string]string{}
-		case strings.HasPrefix(line, ":"):
-			// keepalive
-		default:
-			if i := strings.Index(line, ":"); i >= 0 {
-				current[line[:i]] = strings.TrimPrefix(line[i+1:], " ")
-			}
-		}
-	}
-	return scanner.Err()
+	return streamFromCursorWith(ctx, g, bearer, source, cursor, cursorPath, func(ctx context.Context, msg map[string]string) error {
+		return forwardOneTUI(ctx, prog, cli, to, msg, source, exitOnError)
+	})
 }
 
-// forwardOneTUI forwards a single event and notifies prog of delivery start/completion.
 func forwardOneTUI(ctx context.Context, prog *tea.Program, cli *http.Client, to string, msg map[string]string, source string, exitOnError bool) error {
-	var p struct {
-		DeliveryID        string            `json:"delivery_id"`
-		ProviderTimestamp time.Time         `json:"provider_timestamp"`
-		Headers           map[string]string `json:"headers"`
-		Body              string            `json:"body"`
-	}
-	if err := json.Unmarshal([]byte(msg["data"]), &p); err != nil {
-		return fmt.Errorf("parse event: %w", err)
-	}
-	bodyBytes, err := base64.StdEncoding.DecodeString(p.Body)
+	p, err := parseEventPayload(msg)
 	if err != nil {
-		return fmt.Errorf("decode body: %w", err)
-	}
-
-	delivID := p.DeliveryID
-	if delivID == "" {
-		delivID = msg["id"]
+		return err
 	}
 
 	prog.Send(tui.DeliveryReceivedMsg{Delivery: tui.Delivery{
-		ID:        delivID,
+		ID:        p.DeliveryID,
 		RecvAt:    time.Now(),
 		Method:    "POST",
 		Path:      "/" + source,
 		Source:    source,
 		InFlight:  true,
-		SizeBytes: int64(len(bodyBytes)),
+		SizeBytes: int64(len(p.Body)),
 	}})
 
 	start := time.Now()
@@ -270,7 +246,7 @@ func forwardOneTUI(ctx context.Context, prog *tea.Program, cli *http.Client, to 
 	var forwardErr error
 
 	for attempt := 0; ; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, to, bytes.NewReader(bodyBytes))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, to, bytes.NewReader(p.Body))
 		if err != nil {
 			forwardErr = err
 			break
@@ -317,15 +293,16 @@ func forwardOneTUI(ctx context.Context, prog *tea.Program, cli *http.Client, to 
 	}
 
 	suffix := ""
-	if forwardErr != nil && ctx.Err() == nil {
-		suffix = "err"
-		if finalStatus == 0 {
-			finalStatus = 0
+	if forwardErr != nil {
+		if ctx.Err() != nil {
+			suffix = "cancelled"
+		} else {
+			suffix = "err"
 		}
 	}
 
 	prog.Send(tui.DeliveryCompletedMsg{
-		ID:         delivID,
+		ID:         p.DeliveryID,
 		Status:     finalStatus,
 		DurationMS: time.Since(start).Milliseconds(),
 		Suffix:     suffix,
@@ -346,7 +323,9 @@ func tokenFingerprint(token string) (prefix, suffix string) {
 	return token, ""
 }
 
-func streamFromCursor(ctx context.Context, g globals, bearer, source string, cursor *int64, cursorPath, to string, cli *http.Client, exitOnError bool) error {
+// streamFromCursorWith opens an SSE subscription and calls handle for each event.
+// Malformed events that return errSkipEvent have their cursor advanced and are skipped.
+func streamFromCursorWith(ctx context.Context, g globals, bearer, source string, cursor *int64, cursorPath string, handle func(context.Context, map[string]string) error) error {
 	endpoint := fmt.Sprintf("%s/subscribe/%s?since=%d", strings.TrimRight(g.Server, "/"), source, *cursor)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -375,15 +354,21 @@ func streamFromCursor(ctx context.Context, g globals, bearer, source string, cur
 			}
 			seq, err := strconv.ParseInt(current["id"], 10, 64)
 			if err != nil {
-				current = map[string]string{}
+				clear(current)
 				continue
 			}
-			if err := forwardOne(ctx, cli, to, current, exitOnError); err != nil {
+			if err := handle(ctx, current); err != nil {
+				if errors.Is(err, errSkipEvent) {
+					*cursor = seq
+					saveCursor(cursorPath, seq)
+					clear(current)
+					continue
+				}
 				return err
 			}
 			*cursor = seq
 			saveCursor(cursorPath, seq)
-			current = map[string]string{}
+			clear(current)
 		case strings.HasPrefix(line, ":"):
 			// keepalive
 		default:
@@ -395,23 +380,21 @@ func streamFromCursor(ctx context.Context, g globals, bearer, source string, cur
 	return scanner.Err()
 }
 
+func streamFromCursor(ctx context.Context, g globals, bearer, source string, cursor *int64, cursorPath, to string, cli *http.Client, exitOnError bool) error {
+	return streamFromCursorWith(ctx, g, bearer, source, cursor, cursorPath, func(ctx context.Context, msg map[string]string) error {
+		return forwardOne(ctx, cli, to, msg, exitOnError)
+	})
+}
+
 func forwardOne(ctx context.Context, cli *http.Client, to string, msg map[string]string, exitOnError bool) error {
-	var p struct {
-		DeliveryID        string            `json:"delivery_id"`
-		ProviderTimestamp time.Time         `json:"provider_timestamp"`
-		Headers           map[string]string `json:"headers"`
-		Body              string            `json:"body"`
-	}
-	if err := json.Unmarshal([]byte(msg["data"]), &p); err != nil {
-		return fmt.Errorf("parse event: %w", err)
-	}
-	bodyBytes, err := base64.StdEncoding.DecodeString(p.Body)
+	p, err := parseEventPayload(msg)
 	if err != nil {
-		return fmt.Errorf("decode body: %w", err)
+		fmt.Fprintf(os.Stderr, "forward: malformed event seq=%s: %v\n", msg["id"], err)
+		return err
 	}
 
 	for attempt := 0; ; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, to, bytes.NewReader(bodyBytes))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, to, bytes.NewReader(p.Body))
 		if err != nil {
 			return err
 		}

@@ -7,16 +7,16 @@ import (
 	"github.com/atotto/clipboard"
 )
 
-func tickCmd() tea.Cmd {
-	return tea.Tick(time.Second, func(t time.Time) tea.Msg {
-		return tickMsg{t: t}
+func toastExpireCmd() tea.Cmd {
+	return tea.Tick(1500*time.Millisecond, func(time.Time) tea.Msg {
+		return toastExpiredMsg{}
 	})
 }
 
 func copyURLCmd(url string) tea.Cmd {
 	return func() tea.Msg {
 		if err := clipboard.WriteAll(url); err != nil {
-			return clipboardCopiedMsg{msg: "copy failed — no clipboard"}
+			return clipboardCopiedMsg{msg: "copy failed — check clipboard access"}
 		}
 		return clipboardCopiedMsg{msg: "URL copied"}
 	}

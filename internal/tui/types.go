@@ -6,10 +6,9 @@ import "time"
 type SessionState int
 
 const (
-	StateOnline       SessionState = iota
-	StateReconnecting SessionState = iota
-	StatePaused       SessionState = iota
-	StateOffline      SessionState = iota
+	StateOnline SessionState = iota
+	StateReconnecting
+	StateOffline
 )
 
 // SessionInfo holds the display data shown in the session header.
@@ -53,6 +52,10 @@ type DeliveryCompletedMsg struct {
 // SessionStateMsg is sent when the session connection state changes.
 type SessionStateMsg struct{ Info SessionInfo }
 
-type tickMsg struct{ t time.Time }
+// QuitMsg tells the model to quit the program. Send it from outside the TUI
+// (e.g. the forward goroutine) when the program must exit programmatically.
+type QuitMsg struct{}
+
+type toastExpiredMsg struct{}
 
 type clipboardCopiedMsg struct{ msg string }

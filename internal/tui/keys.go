@@ -4,8 +4,8 @@ import "charm.land/bubbles/v2/key"
 
 type keyMap struct {
 	copyURL key.Binding
-	pause   key.Binding
 	help    key.Binding
+	dismiss key.Binding
 	quit    key.Binding
 }
 
@@ -14,13 +14,12 @@ var defaultKeyMap = keyMap{
 		key.WithKeys("c"),
 		key.WithHelp("c", "copy URL"),
 	),
-	pause: key.NewBinding(
-		key.WithKeys("p"),
-		key.WithHelp("p", "pause/resume"),
-	),
 	help: key.NewBinding(
 		key.WithKeys("?"),
 		key.WithHelp("?", "help"),
+	),
+	dismiss: key.NewBinding(
+		key.WithKeys("esc"),
 	),
 	quit: key.NewBinding(
 		key.WithKeys("q", "ctrl+c"),
@@ -29,12 +28,11 @@ var defaultKeyMap = keyMap{
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.copyURL, k.pause, k.help, k.quit}
+	return []key.Binding{k.copyURL, k.help, k.quit}
 }
 
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.copyURL, k.pause},
-		{k.help, k.quit},
+		{k.copyURL, k.help, k.quit},
 	}
 }

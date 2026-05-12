@@ -9,8 +9,7 @@ import (
 	lipgloss "charm.land/lipgloss/v2"
 )
 
-// Version is the hooksctl version string shown in the TUI title and help overlay.
-// Override at build time: -ldflags "-X charm.land/bubbletea/v2.Version=v1.2.3"
+// Override at build time: -ldflags "-X github.com/onebusaway/hooks/internal/tui.Version=v1.2.3"
 var Version = "dev"
 
 // View satisfies tea.Model and returns the full-screen TUI view.
@@ -82,12 +81,15 @@ func renderIdentity(m Model) string {
 		return statusLine + "\n" + route
 	}
 
-	email := m.st.dim.Render("account ") + m.session.Email
 	scopeStr := strings.Join(m.session.Scopes, ", ")
 	token := m.st.dim.Render("token   ") +
 		m.st.tokenHighlight.Render(m.session.TokenPrefix+"…"+m.session.TokenSuffix) +
 		m.st.dim.Render("  "+scopeStr)
 
+	if m.session.Email == "" {
+		return statusLine + "\n" + route + "\n" + token
+	}
+	email := m.st.dim.Render("account ") + m.session.Email
 	return statusLine + "\n" + email + "\n" + route + "\n" + token
 }
 
@@ -101,8 +103,6 @@ func sessionPill(m Model) string {
 			rc = fmt.Sprintf(" (×%d)", m.session.ReconnectCount)
 		}
 		return m.st.statusReconnecting.Render("● reconnecting" + rc)
-	case StatePaused:
-		return m.st.statusPaused.Render("● paused")
 	default:
 		return m.st.statusOffline.Render("● offline")
 	}
@@ -153,6 +153,7 @@ func renderDeliveryRow(d Delivery, termW int, st tuiStyles) string {
 	rightStr := strings.Join(rightParts, " ")
 
 	// fixed prefix width (without ANSI): ts(12) + sp(1) + method(6) + sp(1) + source(18) + sp(1) + status
+	// Keep these widths in sync with the %-6s and %-18s format strings above.
 	// status visible width: 4 for code, 11 for "⇡ in flight"
 	statusVisW := 4
 	if d.InFlight {
@@ -186,20 +187,19 @@ func renderKeybindBar(m Model) string {
 		return m.st.keybindChip.Render(" "+k+" ") + " " + label
 	}
 	parts := []string{
-		chip("c", "copy URL"),
-		chip("p", "pause"),
-		chip("?", "help"),
-		chip("q", "quit"),
+		chip(m.keys.copyURL.Help().Key, m.keys.copyURL.Help().Desc),
+		chip(m.keys.help.Help().Key, m.keys.help.Help().Desc),
+		chip(m.keys.quit.Help().Key, m.keys.quit.Help().Desc),
 	}
 	return strings.Join(parts, "  ")
 }
 
+// renderHelpOverlay renders the help box. Key strings must stay in sync with defaultKeyMap in keys.go.
 func renderHelpOverlay(m Model) string {
 	var sb strings.Builder
 	sb.WriteString("┌── Help ──────────────────────────────┐\n")
 	sb.WriteString("│                                      │\n")
 	sb.WriteString("│  c      copy forwarding URL          │\n")
-	sb.WriteString("│  p      pause / resume               │\n")
 	sb.WriteString("│  ?/esc  toggle help                  │\n")
 	sb.WriteString("│  q/^C   quit                         │\n")
 	sb.WriteString("│  ↑↓     scroll                       │\n")

@@ -5,10 +5,8 @@ import lipgloss "charm.land/lipgloss/v2"
 type tuiStyles struct {
 	title              lipgloss.Style
 	dim                lipgloss.Style
-	label              lipgloss.Style
 	statusOnline       lipgloss.Style
 	statusReconnecting lipgloss.Style
-	statusPaused       lipgloss.Style
 	statusOffline      lipgloss.Style
 	forwardURL         lipgloss.Style
 	targetURL          lipgloss.Style
@@ -34,10 +32,8 @@ func newStyles(isDark bool) tuiStyles {
 	return tuiStyles{
 		title:              lipgloss.NewStyle().Foreground(blue).Bold(true),
 		dim:                lipgloss.NewStyle().Foreground(dim),
-		label:              lipgloss.NewStyle().Foreground(dim),
 		statusOnline:       lipgloss.NewStyle().Foreground(green).Bold(true),
 		statusReconnecting: lipgloss.NewStyle().Foreground(amber).Bold(true),
-		statusPaused:       lipgloss.NewStyle().Foreground(amber).Bold(true),
 		statusOffline:      lipgloss.NewStyle().Foreground(dim).Bold(true),
 		forwardURL:         lipgloss.NewStyle().Foreground(blue),
 		targetURL:          lipgloss.NewStyle().Foreground(dim),
