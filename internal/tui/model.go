@@ -42,7 +42,7 @@ func New(session SessionInfo, cancel context.CancelFunc) Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.RequestBackgroundColor
+	return tea.Batch(tea.RequestBackgroundColor, uptimeTickCmd())
 }
 
 func appendDelivery(m *Model, d Delivery) {
@@ -106,6 +106,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case SessionStateMsg:
 		m.session = msg.Info
+
+	case uptimeTickMsg:
+		cmds = append(cmds, uptimeTickCmd())
 
 	case toastExpiredMsg:
 		if !m.toastExpiry.IsZero() && time.Now().After(m.toastExpiry) {

@@ -59,3 +59,5 @@ type QuitMsg struct{}
 type toastExpiredMsg struct{}
 
 type clipboardCopiedMsg struct{ msg string }
+
+type uptimeTickMsg struct{}

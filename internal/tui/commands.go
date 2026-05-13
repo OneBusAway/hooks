@@ -13,6 +13,12 @@ func toastExpireCmd() tea.Cmd {
 	})
 }
 
+func uptimeTickCmd() tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg {
+		return uptimeTickMsg{}
+	})
+}
+
 func copyURLCmd(url string) tea.Cmd {
 	return func() tea.Msg {
 		if err := clipboard.WriteAll(url); err != nil {
