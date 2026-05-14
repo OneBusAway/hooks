@@ -46,6 +46,12 @@ func (m Model) Init() tea.Cmd {
 }
 
 func appendDelivery(m *Model, d Delivery) {
+	for i := range m.deliveries {
+		if m.deliveries[i].ID == d.ID {
+			m.deliveries[i] = d
+			return
+		}
+	}
 	if len(m.deliveries) >= ringCap {
 		m.deliveries = m.deliveries[1:]
 	}
@@ -73,7 +79,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.termW = msg.Width
 		m.termH = msg.Height
-		headerRows := fixedHeaderRows(m.termH)
+		headerRows := fixedHeaderRows(m.termH, m.session.Email != "")
 		m.vp.SetWidth(m.termW)
 		m.vp.SetHeight(viewportHeight(m.termH, headerRows))
 		rebuildViewport(&m)

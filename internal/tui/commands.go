@@ -22,7 +22,7 @@ func uptimeTickCmd() tea.Cmd {
 func copyURLCmd(url string) tea.Cmd {
 	return func() tea.Msg {
 		if err := clipboard.WriteAll(url); err != nil {
-			return clipboardCopiedMsg{msg: "copy failed — check clipboard access"}
+			return clipboardCopiedMsg{msg: "copy failed: " + err.Error()}
 		}
 		return clipboardCopiedMsg{msg: "URL copied"}
 	}

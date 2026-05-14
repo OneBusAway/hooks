@@ -34,19 +34,23 @@ func TestViewportHeight(t *testing.T) {
 // --- fixedHeaderRows ---
 
 func TestFixedHeaderRows(t *testing.T) {
-	// >= 24: title(1) + identity(4) + divider(1) + deliveries-header(1) + divider(1) + footer(1)
-	if got := fixedHeaderRows(40); got != 9 {
-		t.Errorf("fixedHeaderRows(40) = %d; want 9", got)
+	// >= 24 with email: title(1) + identity(4) + divider(1) + deliveries-header(1) + divider(1) + footer(1)
+	if got := fixedHeaderRows(40, true); got != 9 {
+		t.Errorf("fixedHeaderRows(40, true) = %d; want 9", got)
 	}
-	if got := fixedHeaderRows(24); got != 9 {
-		t.Errorf("fixedHeaderRows(24) = %d; want 9", got)
+	if got := fixedHeaderRows(24, true); got != 9 {
+		t.Errorf("fixedHeaderRows(24, true) = %d; want 9", got)
+	}
+	// >= 24 without email: title(1) + identity(3) + divider(1) + deliveries-header(1) + divider(1) + footer(1)
+	if got := fixedHeaderRows(40, false); got != 8 {
+		t.Errorf("fixedHeaderRows(40, false) = %d; want 8", got)
 	}
 	// < 24: title(1) + identity(2) + divider(1) + deliveries-header(1) + divider(1) + footer(1)
-	if got := fixedHeaderRows(23); got != 7 {
-		t.Errorf("fixedHeaderRows(23) = %d; want 7", got)
+	if got := fixedHeaderRows(23, false); got != 7 {
+		t.Errorf("fixedHeaderRows(23, false) = %d; want 7", got)
 	}
-	if got := fixedHeaderRows(10); got != 7 {
-		t.Errorf("fixedHeaderRows(10) = %d; want 7", got)
+	if got := fixedHeaderRows(10, true); got != 7 {
+		t.Errorf("fixedHeaderRows(10, true) = %d; want 7", got)
 	}
 }
 
@@ -177,15 +181,15 @@ func TestRenderDeliveryRow_ColumnDrop(t *testing.T) {
 func TestAppendDelivery_RingBufferEviction(t *testing.T) {
 	m := Model{atBottom: true}
 
-	// Fill to capacity
+	// Fill to capacity with unique IDs.
 	for i := range ringCap {
-		appendDelivery(&m, Delivery{ID: string(rune('a' + i%26)), RecvAt: time.Now()})
+		appendDelivery(&m, Delivery{ID: fmt.Sprintf("d%d", i), RecvAt: time.Now()})
 	}
 	if len(m.deliveries) != ringCap {
 		t.Fatalf("expected %d deliveries, got %d", ringCap, len(m.deliveries))
 	}
 
-	// One more should evict the oldest
+	// One more should evict the oldest.
 	appendDelivery(&m, Delivery{ID: "new", RecvAt: time.Now()})
 	if len(m.deliveries) != ringCap {
 		t.Fatalf("after eviction expected %d deliveries, got %d", ringCap, len(m.deliveries))
@@ -193,6 +197,41 @@ func TestAppendDelivery_RingBufferEviction(t *testing.T) {
 	last := m.deliveries[ringCap-1]
 	if last.ID != "new" {
 		t.Errorf("expected last delivery to be 'new', got %q", last.ID)
+	}
+}
+
+func TestAppendDelivery_DeduplicatesID(t *testing.T) {
+	m := Model{}
+	appendDelivery(&m, Delivery{ID: "d1", InFlight: true})
+	appendDelivery(&m, Delivery{ID: "d2", InFlight: true})
+
+	// Re-append d1 with updated fields (simulates reconnect).
+	appendDelivery(&m, Delivery{ID: "d1", InFlight: true, Status: 200})
+
+	if len(m.deliveries) != 2 {
+		t.Fatalf("expected 2 deliveries after dedup, got %d", len(m.deliveries))
+	}
+	if m.deliveries[0].Status != 200 {
+		t.Errorf("expected d1 status updated to 200, got %d", m.deliveries[0].Status)
+	}
+}
+
+func TestAppendDelivery_DedupRunsBeforeEviction(t *testing.T) {
+	m := Model{}
+
+	// Fill to capacity with unique IDs.
+	for i := range ringCap {
+		appendDelivery(&m, Delivery{ID: fmt.Sprintf("d%d", i), RecvAt: time.Now()})
+	}
+
+	// Re-appending the first entry must update in-place, not evict the oldest.
+	appendDelivery(&m, Delivery{ID: "d0", RecvAt: time.Now(), Status: 200})
+
+	if len(m.deliveries) != ringCap {
+		t.Fatalf("dedup at capacity: want %d deliveries, got %d", ringCap, len(m.deliveries))
+	}
+	if m.deliveries[0].Status != 200 {
+		t.Errorf("dedup at capacity: want d0 status updated to 200, got %d", m.deliveries[0].Status)
 	}
 }
 

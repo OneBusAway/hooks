@@ -30,6 +30,14 @@ import (
 // own context from os signals.
 var forwardTestCtx context.Context
 
+const (
+	deliverySuffixMalformed    = "malformed"
+	deliverySuffixTransportErr = "transport err"
+	deliverySuffixRetrying     = "retrying"
+	deliverySuffixCancelled    = "cancelled"
+	deliverySuffixErr          = "err"
+)
+
 // errSkipEvent is returned when an event payload is permanently malformed.
 // The caller advances the cursor past the broken event rather than reconnecting.
 var errSkipEvent = errors.New("skip event")
@@ -160,8 +168,7 @@ func runWithTUI(ctx context.Context, cancel context.CancelFunc, g globals, sourc
 	}
 
 	model := tui.New(baseSession, cancel)
-	prog := tea.NewProgram(model)
-	defer func() { _ = prog.RestoreTerminal() }()
+	prog := tea.NewProgram(model, tea.WithContext(ctx))
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -196,7 +203,6 @@ func runWithTUI(ctx context.Context, cancel context.CancelFunc, g globals, sourc
 			info.ReconnectCount = reconnectCount
 			prog.Send(tui.SessionStateMsg{Info: info})
 
-			fmt.Fprintf(os.Stderr, "forward: %v; reconnecting\n", err)
 			d := backoff()
 			select {
 			case <-ctx.Done():
@@ -207,6 +213,10 @@ func runWithTUI(ctx context.Context, cancel context.CancelFunc, g globals, sourc
 	}()
 
 	if _, err := prog.Run(); err != nil {
+		if ctx.Err() != nil {
+			return 0
+		}
+		cancel()
 		fmt.Fprintln(os.Stderr, "forward:", err)
 		return 1
 	}
@@ -228,24 +238,38 @@ func streamFromCursorTUI(ctx context.Context, prog *tea.Program, g globals, bear
 func forwardOneTUI(ctx context.Context, prog *tea.Program, cli *http.Client, to string, msg map[string]string, source string, exitOnError bool) error {
 	p, err := parseEventPayload(msg)
 	if err != nil {
+		prog.Send(tui.DeliveryReceivedMsg{Delivery: tui.Delivery{
+			ID:     msg["id"],
+			RecvAt: time.Now(),
+			Method: http.MethodPost,
+			Path:   "/" + source,
+			Source: source,
+			Suffix: deliverySuffixMalformed,
+		}})
 		return err
 	}
 
-	prog.Send(tui.DeliveryReceivedMsg{Delivery: tui.Delivery{
+	recv := tui.Delivery{
 		ID:        p.DeliveryID,
 		RecvAt:    time.Now(),
-		Method:    "POST",
+		Method:    http.MethodPost,
 		Path:      "/" + source,
 		Source:    source,
 		InFlight:  true,
 		SizeBytes: int64(len(p.Body)),
-	}})
+	}
+	prog.Send(tui.DeliveryReceivedMsg{Delivery: recv})
 
 	start := time.Now()
 	var finalStatus int
 	var forwardErr error
 
 	for attempt := 0; ; attempt++ {
+		if attempt > 0 {
+			prog.Send(tui.DeliveryReceivedMsg{Delivery: recv})
+		}
+		finalStatus = 0
+
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, to, bytes.NewReader(p.Body))
 		if err != nil {
 			forwardErr = err
@@ -271,6 +295,11 @@ func forwardOneTUI(ctx context.Context, prog *tea.Program, cli *http.Client, to 
 				forwardErr = fmt.Errorf("transport: %w", err)
 				break
 			}
+			prog.Send(tui.DeliveryCompletedMsg{
+				ID:         p.DeliveryID,
+				DurationMS: time.Since(start).Milliseconds(),
+				Suffix:     deliverySuffixTransportErr,
+			})
 			if !sleepWithCtx(ctx, attemptBackoff(attempt)) {
 				forwardErr = ctx.Err()
 				break
@@ -286,6 +315,12 @@ func forwardOneTUI(ctx context.Context, prog *tea.Program, cli *http.Client, to 
 			forwardErr = fmt.Errorf("target returned %d", resp.StatusCode)
 			break
 		}
+		prog.Send(tui.DeliveryCompletedMsg{
+			ID:         p.DeliveryID,
+			Status:     resp.StatusCode,
+			DurationMS: time.Since(start).Milliseconds(),
+			Suffix:     deliverySuffixRetrying,
+		})
 		if !sleepWithCtx(ctx, attemptBackoff(attempt)) {
 			forwardErr = ctx.Err()
 			break
@@ -295,9 +330,9 @@ func forwardOneTUI(ctx context.Context, prog *tea.Program, cli *http.Client, to 
 	suffix := ""
 	if forwardErr != nil {
 		if ctx.Err() != nil {
-			suffix = "cancelled"
+			suffix = deliverySuffixCancelled
 		} else {
-			suffix = "err"
+			suffix = deliverySuffixErr
 		}
 	}
 
@@ -506,7 +541,11 @@ func loadCursor(path string) int64 {
 }
 
 func saveCursor(path string, seq int64) {
-	_ = os.WriteFile(path, []byte(strconv.FormatInt(seq, 10)+"\n"), 0o600)
+	if err := os.WriteFile(path, []byte(strconv.FormatInt(seq, 10)+"\n"), 0o600); err != nil {
+		if !xterm.IsTerminal(os.Stdout.Fd()) {
+			fmt.Fprintf(os.Stderr, "forward: save cursor: %v\n", err)
+		}
+	}
 }
 
 // ephemeralListener is the in-memory record of a `kind='listener'`,

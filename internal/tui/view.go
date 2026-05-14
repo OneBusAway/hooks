@@ -211,10 +211,17 @@ func renderHelpOverlay(m Model) string {
 }
 
 // fixedHeaderRows returns the number of rows consumed by non-viewport layout.
-func fixedHeaderRows(termH int) int {
-	identityRows := 4
-	if termH < 24 {
+// identityRows is 4 when email is present (status+email+route+token), 3 when
+// absent (status+route+token), or 2 for compact terminals (termH < 24).
+func fixedHeaderRows(termH int, hasEmail bool) int {
+	var identityRows int
+	switch {
+	case termH < 24:
 		identityRows = 2
+	case hasEmail:
+		identityRows = 4
+	default:
+		identityRows = 3
 	}
 	// title + identity + divider + deliveries-header + divider + footer
 	return 1 + identityRows + 1 + 1 + 1 + 1
