@@ -1,4 +1,4 @@
-.PHONY: build test lint run dev tidy sqlc sqlc-diff docker-build docker-run docker-test
+.PHONY: build install test lint run dev tidy sqlc sqlc-diff docker-build docker-run docker-test
 
 GO ?= go
 HOOKS_BIN := ./bin/hooks
@@ -12,6 +12,11 @@ build:
 	@mkdir -p bin
 	$(GO) build -o $(HOOKS_BIN) ./cmd/hooks
 	$(GO) build -o $(HOOKSCTL_BIN) ./cmd/hooksctl
+
+# Installs hooksctl into $GOBIN if set, else $GOPATH/bin (default ~/go/bin).
+# Override the destination with `GOBIN=/some/dir make install`.
+install:
+	$(GO) install ./cmd/hooksctl
 
 test:
 	$(GO) test ./...

@@ -15,6 +15,7 @@ There are two binaries:
 
 ```sh
 make build          # builds ./bin/hooks and ./bin/hooksctl
+make install        # go install ./cmd/hooksctl (into $GOBIN, else $GOPATH/bin)
 make test           # go test ./...
 make lint           # golangci-lint run ./... (config in .golangci.yml)
 make tidy           # go mod tidy
